@@ -1,32 +1,37 @@
 # Pradipta Bot
 
-Bot Discord sederhana.
+Bot Discord internal keluarga Pradipta berbasis Node.js (ES Modules) dan discord.js v14.
 
-## Struktur project
+## Struktur Project
 
 ```text
-.
-├── index.js                    # Entry point
+pradipta-bot/
 ├── src/
-│   ├── app.js                  # Bootstrap aplikasi
+│   ├── commands/
 │   ├── config/
-│   │   └── index.js            # Validasi environment variable
-│   ├── commands/               # Registry, definisi, dan handler slash command
-│   │   ├── ping.js
-│   │   └── registry.js
-│   ├── discord/                # Client dan fitur Discord
-│   │   ├── client.js
-│   │   └── command-registration.js
+│   │   └── config.js
+│   ├── data/
+│   ├── events/
+│   │   └── ready.js
+│   ├── handlers/
+│   │   └── eventHandler.js
+│   ├── services/
+│   └── index.js
+├── database/
+├── .env
 ├── .env.example
+├── .gitignore
 └── package.json
 ```
 
-## Menjalankan
+## Menjalankan Bot
 
-1. Salin `.env.example` menjadi `.env`, lalu isi kredensial Discord.
-2. Install dependency dengan `npm install`.
-3. Jalankan bot dengan `npm start`.
-
-Command yang tersedia:
-
-- `/ping` — menampilkan latensi bot.
+1. Salin `.env.example` menjadi `.env`, lalu isi konfigurasi yang diperlukan.
+2. Jalankan mode development (watch mode):
+   ```bash
+   npm run dev
+   ```
+3. Atau jalankan mode produksi:
+   ```bash
+   npm start
+   ```

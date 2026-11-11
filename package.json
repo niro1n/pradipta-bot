@@ -1,17 +1,18 @@
 {
   "name": "pradipta-bot",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Bot Discord internal keluarga Pradipta",
+  "main": "src/index.js",
+  "type": "module",
   "scripts": {
-    "start": "node index.js",
-    "check": "node --check index.js && node --check src/app.js",
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "check": "node --check src/index.js && node --check src/config/config.js && node --check src/handlers/eventHandler.js && node --check src/events/ready.js",
     "test": "npm run check"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
   "dependencies": {
     "discord.js": "^14.27.0",
     "dotenv": "^18.0.4"
