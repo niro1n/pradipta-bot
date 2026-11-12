@@ -80,7 +80,11 @@ export function buildPresenceSlides(humanCount) {
   if (typeof humanCount !== "number") {
     return [
       {
+<<<<<<< HEAD
         name: `🦅 ${config.bot.activity.toUpperCase()}`,
+=======
+        name: `🦅 ${config.bot.activity}`,
+>>>>>>> 696fb6ca645a749adceaea53214dfb2e86fe787e
         type: ActivityType.Watching,
       },
     ];
@@ -88,7 +92,11 @@ export function buildPresenceSlides(humanCount) {
 
   return [
     {
+<<<<<<< HEAD
       name: `👑 ${humanCount} FAMILY MEMBERS`,
+=======
+      name: `👑 ${humanCount} Family Members`,
+>>>>>>> 696fb6ca645a749adceaea53214dfb2e86fe787e
       type: ActivityType.Watching,
     },
     {
