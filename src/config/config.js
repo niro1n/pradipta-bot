@@ -12,7 +12,8 @@ export const config = {
   bot: {
     name: "Pradipta Bot",
     status: "online",
-    activity: "Pradipta Family",
+    activity: "PRADIPTA FAMILY",
+    presenceIntervalMs: 15000,
     timezone: "Asia/Jakarta",
   },
   discord: {

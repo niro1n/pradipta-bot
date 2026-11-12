@@ -5,6 +5,10 @@ import {
 } from "discord.js";
 import config from "../config/config.js";
 
+let rotationTimer = null;
+let currentSlideIndex = 0;
+let cachedHumanCount = null;
+
 export async function hasGuildMembersIntent(token) {
   try {
     const response = await fetch("https://discord.com/api/v10/applications/@me", {
@@ -72,16 +76,55 @@ export function countNonAppMembers(members) {
   return members.filter((member) => !member.user?.bot).size;
 }
 
-function setBotPresence(client, activityText) {
-  client.user.setPresence({
-    activities: [
+export function buildPresenceSlides(humanCount) {
+  if (typeof humanCount !== "number") {
+    return [
       {
-        name: activityText,
+        name: `🦅 ${config.bot.activity.toUpperCase()}`,
         type: ActivityType.Watching,
       },
-    ],
+    ];
+  }
+
+  return [
+    {
+      name: `👑 ${humanCount} FAMILY MEMBERS`,
+      type: ActivityType.Watching,
+    },
+    {
+      name: "🦅 PRADIPTA FAMILY",
+      type: ActivityType.Watching,
+    },
+  ];
+}
+
+function applySlide(client, slide) {
+  if (!client?.user) return;
+
+  client.user.setPresence({
+    activities: [slide],
     status: config.bot.status,
   });
+}
+
+export function stopPresenceRotation() {
+  if (rotationTimer) {
+    clearInterval(rotationTimer);
+    rotationTimer = null;
+  }
+}
+
+function startPresenceRotation(client) {
+  stopPresenceRotation();
+
+  const intervalMs = config.bot.presenceIntervalMs || 15000;
+  rotationTimer = setInterval(() => {
+    const slides = buildPresenceSlides(cachedHumanCount);
+    if (slides.length <= 1) return;
+
+    currentSlideIndex = (currentSlideIndex + 1) % slides.length;
+    applySlide(client, slides[currentSlideIndex]);
+  }, intervalMs);
 }
 
 export async function updateMemberPresence(client, { forceFetch = false } = {}) {
@@ -91,16 +134,21 @@ export async function updateMemberPresence(client, { forceFetch = false } = {}) 
   const guild = await resolveTargetGuild(client);
 
   if (!hasMembersIntent) {
+    cachedHumanCount = null;
+    stopPresenceRotation();
+
     if (forceFetch) {
       console.warn(
         '[PRESENCE WARN] Server Members Intent belum aktif di Discord Developer Portal. Akun ber-badge "APP" belum bisa difilter — menggunakan status default.'
       );
     }
 
-    setBotPresence(client, config.bot.activity);
+    const fallbackSlides = buildPresenceSlides(null);
+    applySlide(client, fallbackSlides[0]);
+
     return {
       mode: "fallback",
-      activityText: config.bot.activity,
+      activityText: fallbackSlides[0].name,
       humanCount: null,
       appCount: null,
       totalCount: guild?.memberCount ?? null,
@@ -108,13 +156,18 @@ export async function updateMemberPresence(client, { forceFetch = false } = {}) 
   }
 
   if (!guild) {
+    cachedHumanCount = null;
+    stopPresenceRotation();
+
     console.warn(
       "[PRESENCE WARN] Target server tidak ditemukan, menggunakan status default."
     );
-    setBotPresence(client, config.bot.activity);
+    const fallbackSlides = buildPresenceSlides(null);
+    applySlide(client, fallbackSlides[0]);
+
     return {
       mode: "fallback",
-      activityText: config.bot.activity,
+      activityText: fallbackSlides[0].name,
       humanCount: null,
       appCount: null,
       totalCount: null,
@@ -129,17 +182,22 @@ export async function updateMemberPresence(client, { forceFetch = false } = {}) 
   const totalCount = members.size;
   const humanCount = countNonAppMembers(members);
   const appCount = totalCount - humanCount;
-  const activityText = `${humanCount} family members`;
 
-  setBotPresence(client, activityText);
+  cachedHumanCount = humanCount;
+  currentSlideIndex = 0;
+
+  const slides = buildPresenceSlides(humanCount);
+  applySlide(client, slides[0]);
+  startPresenceRotation(client);
 
   console.log(
-    `[PRESENCE] Watching ${activityText} (Total: ${totalCount} | Non-APP: ${humanCount} | APP dilewati: ${appCount})`
+    `[PRESENCE] Watching ${slides.map((s) => s.name).join(" ↔ ")} (Total: ${totalCount} | Non-APP: ${humanCount} | APP dilewati: ${appCount})`
   );
 
   return {
     mode: "memberCount",
-    activityText,
+    activityText: slides[0].name,
+    slides: slides.map((s) => s.name),
     humanCount,
     appCount,
     totalCount,
