@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "check": "node --check src/index.js && node --check src/config/config.js && node --check src/handlers/eventHandler.js && node --check src/events/ready.js",
+    "check": "node --check src/index.js && node --check src/config/config.js && node --check src/handlers/eventHandler.js && node --check src/services/presenceService.js && node --check src/events/ready.js && node --check src/events/guildMemberAdd.js && node --check src/events/guildMemberRemove.js",
     "test": "npm run check"
   },
   "keywords": [],

@@ -1,19 +1,12 @@
-import { ActivityType, Events } from "discord.js";
+import { Events } from "discord.js";
 import config from "../config/config.js";
+import { updateMemberPresence } from "../services/presenceService.js";
 
 export default {
   name: Events.ClientReady,
   once: true,
   async execute(client) {
-    client.user.setPresence({
-      activities: [
-        {
-          name: config.bot.activity,
-          type: ActivityType.Watching,
-        },
-      ],
-      status: config.bot.status,
-    });
+    await updateMemberPresence(client, { forceFetch: true });
 
     console.log(`[READY] ${config.bot.name} online sebagai ${client.user.tag}`);
     console.log(
