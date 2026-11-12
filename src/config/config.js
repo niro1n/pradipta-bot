@@ -13,6 +13,7 @@ export const config = {
     name: "Pradipta Bot",
     status: "online",
     activity: "Pradipta Family",
+    presenceIntervalMs: 15000,
     timezone: "Asia/Jakarta",
   },
   discord: {

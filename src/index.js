@@ -1,7 +1,10 @@
 import { Client, Events, GatewayIntentBits } from "discord.js";
 import config from "./config/config.js";
 import { loadEvents } from "./handlers/eventHandler.js";
-import { hasGuildMembersIntent } from "./services/presenceService.js";
+import {
+  hasGuildMembersIntent,
+  stopPresenceRotation,
+} from "./services/presenceService.js";
 
 let client = null;
 
@@ -11,6 +14,7 @@ process.on("unhandledRejection", (error) => {
 
 const shutdown = (signal) => {
   console.log(`\n[BOT] Menerima ${signal}, menutup koneksi bot...`);
+  stopPresenceRotation();
   if (client) {
     client.destroy();
   }
