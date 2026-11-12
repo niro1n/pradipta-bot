@@ -12,11 +12,7 @@ export const config = {
   bot: {
     name: "Pradipta Bot",
     status: "online",
-<<<<<<< HEAD
     activity: "PRADIPTA FAMILY",
-=======
-    activity: "Pradipta Family",
->>>>>>> 696fb6ca645a749adceaea53214dfb2e86fe787e
     presenceIntervalMs: 15000,
     timezone: "Asia/Jakarta",
   },
