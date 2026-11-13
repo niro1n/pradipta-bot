@@ -2,7 +2,7 @@ import config from "../config/config.js";
 
 const YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3";
 const REQUEST_TIMEOUT_MS = 8000;
-const MIN_CHECK_INTERVAL_MS = 60 * 1000;
+const MIN_CHECK_INTERVAL_MS = 30 * 1000;
 const QUOTA_COOLDOWN_MS = 30 * 60 * 1000;
 
 let quotaCooldownUntil = 0;
@@ -287,36 +287,71 @@ async function discoverLiveVideoIdFromCanonical(channelId) {
   }
 }
 
+async function discoverVideoIdsFromPublicFeed(channelId) {
+  try {
+    const response = await fetch(
+      `https://www.youtube.com/feeds/videos.xml?channel_id=${encodeURIComponent(channelId)}`,
+      {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+          Accept: "application/atom+xml,application/xml,text/xml;q=0.9,*/*;q=0.8",
+        },
+        signal: AbortSignal.timeout(6000),
+      }
+    );
+
+    if (!response.ok) return [];
+
+    const xml = await response.text();
+    const matches = [...xml.matchAll(/<yt:videoId>([\w-]{11})<\/yt:videoId>/g)];
+    return matches.slice(0, 5).map((m) => m[1]);
+  } catch {
+    return [];
+  }
+}
+
 async function fetchRecentCandidateVideoIds(channelId) {
   const candidates = new Set();
 
-  const canonicalVideoId = await discoverLiveVideoIdFromCanonical(channelId);
+  const [canonicalVideoId, feedVideoIds] = await Promise.all([
+    discoverLiveVideoIdFromCanonical(channelId),
+    discoverVideoIdsFromPublicFeed(channelId),
+  ]);
+
   if (canonicalVideoId) {
     candidates.add(canonicalVideoId);
   }
 
-  const uploadsPlaylistId = getUploadsPlaylistId(channelId);
-  if (uploadsPlaylistId) {
-    try {
-      const playlistData = await callYouTubeApi(
-        "playlistItems",
-        {
-          part: "contentDetails,snippet",
-          playlistId: uploadsPlaylistId,
-          maxResults: 5,
-        },
-        1
-      );
+  for (const vid of feedVideoIds) {
+    candidates.add(vid);
+  }
 
-      for (const item of playlistData?.items || []) {
-        const videoId = item.contentDetails?.videoId || item.snippet?.resourceId?.videoId;
-        if (videoId) {
-          candidates.add(videoId);
+  if (candidates.size === 0) {
+    const uploadsPlaylistId = getUploadsPlaylistId(channelId);
+    if (uploadsPlaylistId) {
+      try {
+        const playlistData = await callYouTubeApi(
+          "playlistItems",
+          {
+            part: "contentDetails,snippet",
+            playlistId: uploadsPlaylistId,
+            maxResults: 5,
+          },
+          1
+        );
+
+        for (const item of playlistData?.items || []) {
+          const videoId =
+            item.contentDetails?.videoId || item.snippet?.resourceId?.videoId;
+          if (videoId) {
+            candidates.add(videoId);
+          }
         }
-      }
-    } catch (error) {
-      if (!error.message.includes("404")) {
-        throw error;
+      } catch (error) {
+        if (!error.message.includes("404")) {
+          throw error;
+        }
       }
     }
   }
