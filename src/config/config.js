@@ -14,7 +14,7 @@ export const config = {
     status: "online",
     activity: "PRADIPTA FAMILY",
     presenceIntervalMs: 15000,
-    monitorIntervalMs: 120000,
+    monitorIntervalMs: 45000,
     timezone: "Asia/Jakarta",
   },
   discord: {
