@@ -5,6 +5,7 @@ import {
   hasGuildMembersIntent,
   stopPresenceRotation,
 } from "./services/presenceService.js";
+import { stopLiveMonitor } from "./services/notification.js";
 
 let client = null;
 
@@ -15,6 +16,7 @@ process.on("unhandledRejection", (error) => {
 const shutdown = (signal) => {
   console.log(`\n[BOT] Menerima ${signal}, menutup koneksi bot...`);
   stopPresenceRotation();
+  stopLiveMonitor();
   if (client) {
     client.destroy();
   }
@@ -48,6 +50,8 @@ async function start() {
 
 start().catch((error) => {
   console.error("[BOT ERROR] Gagal menjalankan bot:", error);
+  stopPresenceRotation();
+  stopLiveMonitor();
   if (client) {
     client.destroy();
   }
