@@ -20,11 +20,17 @@ export async function loadEvents(client) {
       continue;
     }
 
+    // Prevent duplicate listener registration for the same event
+    client.removeAllListeners(event.name);
+
     const listener = async (...args) => {
       try {
         await event.execute(...args);
       } catch (error) {
-        console.error(`[EVENT ERROR] Terjadi kesalahan pada event "${event.name}":`, error);
+        console.error(
+          `[EVENT ERROR] Terjadi kesalahan pada event "${event.name}":`,
+          error
+        );
       }
     };
 
