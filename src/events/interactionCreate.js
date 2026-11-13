@@ -126,7 +126,6 @@ export default {
         }
       }
 
-      // Fallback for any unhandled component/modal interaction so it never times out
       if (
         (interaction.isMessageComponent?.() || interaction.isModalSubmit?.()) &&
         !interaction.replied &&

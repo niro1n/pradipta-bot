@@ -29,7 +29,6 @@ export async function sendLiveNotification(client, { account, member, liveInfo }
     return { sent: false, reason: "missing_channel_id" };
   }
 
-  // Duplicate guard via notification_logs
   const { data: existingLog, error: checkError } = await supabase
     .from("notification_logs")
     .select("id")
@@ -148,7 +147,6 @@ async function handleAccountStatusTransition(client, account, liveResult) {
       })
       .eq("id", account.id);
 
-    // Record or keep active live_sessions row
     const { data: existingSession } = await supabase
       .from("live_sessions")
       .select("id, ended_at")
@@ -178,7 +176,6 @@ async function handleAccountStatusTransition(client, account, liveResult) {
     return;
   }
 
-  // Only mark offline when data source responded authoritatively
   if (liveResult.available !== false) {
     if (account.is_live) {
       await supabase
@@ -274,7 +271,6 @@ export function startLiveMonitor(client) {
     `[MONITOR] Live stream monitor aktif (interval: ${Math.round(intervalMs / 1000)}s)`
   );
 
-  // Run initial check after 10 seconds so startup completes cleanly
   setTimeout(() => {
     runLiveMonitorCycle(client).catch((err) =>
       console.error("[MONITOR] Initial cycle error:", err.message)

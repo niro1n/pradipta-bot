@@ -42,17 +42,14 @@ export function parseYouTubeInput(rawInput) {
     throw new Error("URL yang dimasukkan adalah URL TikTok, bukan YouTube.");
   }
 
-  // 1. Direct Channel ID (UC + 22 chars)
   if (/^UC[\w-]{22}$/.test(input)) {
     return { type: "channelId", value: input };
   }
 
-  // 2. Direct @handle
   if (/^@[a-zA-Z0-9._-]{3,30}$/.test(input)) {
     return { type: "handle", value: input };
   }
 
-  // 3. URL parsing
   if (/^https?:\/\//i.test(input) || /^(www\.|m\.)?youtube\.com\//i.test(input)) {
     const normalizedUrl = /^https?:\/\//i.test(input) ? input : `https://${input}`;
     let parsedUrl;
@@ -105,7 +102,6 @@ export function parseYouTubeInput(rawInput) {
     );
   }
 
-  // 4. Plain username/handle without @
   if (/^[a-zA-Z0-9._-]{3,30}$/.test(input)) {
     return {
       type: "handle",
@@ -294,13 +290,11 @@ async function discoverLiveVideoIdFromCanonical(channelId) {
 async function fetchRecentCandidateVideoIds(channelId) {
   const candidates = new Set();
 
-  // 1. Check canonical /channel/UC.../live page (0 API quota units)
   const canonicalVideoId = await discoverLiveVideoIdFromCanonical(channelId);
   if (canonicalVideoId) {
     candidates.add(canonicalVideoId);
   }
 
-  // 2. Check uploads playlist via playlistItems.list (1 API quota unit, 100x cheaper than search.list)
   const uploadsPlaylistId = getUploadsPlaylistId(channelId);
   if (uploadsPlaylistId) {
     try {
@@ -321,7 +315,6 @@ async function fetchRecentCandidateVideoIds(channelId) {
         }
       }
     } catch (error) {
-      // Some channels with 0 uploads return 404 on UU playlist; ignore safely if canonical check ran
       if (!error.message.includes("404")) {
         throw error;
       }
@@ -385,7 +378,6 @@ export async function checkYouTubeAccountsLive(accounts = [], { force = false } 
     }
   }
 
-  // Batch verify candidate video IDs using videos.list (up to 50 IDs per 1 quota unit)
   const videoIdArray = Array.from(allCandidateVideoIds);
   const liveVideoByChannelId = new Map();
 

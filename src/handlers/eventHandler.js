@@ -20,7 +20,6 @@ export async function loadEvents(client) {
       continue;
     }
 
-    // Prevent duplicate listener registration for the same event
     client.removeAllListeners(event.name);
 
     const listener = async (...args) => {

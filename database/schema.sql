@@ -1,10 +1,5 @@
--- ============================================================================
--- PRADIPTA BOT — SUPABASE POSTGRESQL SCHEMA (SAFE & IDEMPOTENT MIGRATION)
--- ============================================================================
-
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
--- 1. family_members
 CREATE TABLE IF NOT EXISTS public.family_members (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   discord_user_id TEXT UNIQUE NOT NULL,
@@ -15,7 +10,6 @@ CREATE TABLE IF NOT EXISTS public.family_members (
 CREATE INDEX IF NOT EXISTS idx_family_members_discord_user_id
   ON public.family_members (discord_user_id);
 
--- 2. stream_accounts
 CREATE TABLE IF NOT EXISTS public.stream_accounts (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   member_id UUID NOT NULL REFERENCES public.family_members(id) ON DELETE CASCADE,
@@ -42,7 +36,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_stream_accounts_platform_user_id
 CREATE UNIQUE INDEX IF NOT EXISTS uq_stream_accounts_platform_username
   ON public.stream_accounts (platform, lower(username));
 
--- 3. live_sessions
 CREATE TABLE IF NOT EXISTS public.live_sessions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   account_id UUID NOT NULL REFERENCES public.stream_accounts(id) ON DELETE CASCADE,
@@ -59,7 +52,6 @@ CREATE INDEX IF NOT EXISTS idx_live_sessions_account_id
 CREATE UNIQUE INDEX IF NOT EXISTS uq_live_sessions_account_stream
   ON public.live_sessions (account_id, stream_id);
 
--- 4. notification_logs
 CREATE TABLE IF NOT EXISTS public.notification_logs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   account_id UUID NOT NULL REFERENCES public.stream_accounts(id) ON DELETE CASCADE,
@@ -74,7 +66,6 @@ CREATE INDEX IF NOT EXISTS idx_notification_logs_account_id
 CREATE UNIQUE INDEX IF NOT EXISTS uq_notification_logs_account_stream_channel
   ON public.notification_logs (account_id, stream_id, channel_id);
 
--- 5. Row Level Security (Locked down by default; backend uses SUPABASE_SECRET_KEY)
 ALTER TABLE public.family_members ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.stream_accounts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.live_sessions ENABLE ROW LEVEL SECURITY;

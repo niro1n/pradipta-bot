@@ -28,12 +28,9 @@ const SELECTION_TTL_MS = 60 * 60 * 1000;
 const CONFIRMATION_TTL_MS = 10 * 60 * 1000;
 const OWNED_ACCOUNT_CACHE_TTL_MS = 30 * 60 * 1000;
 
-// Temporary per-user state maps (userId -> state with expiresAt)
 export const selectedPlatforms = new Map();
 export const pendingRegistrations = new Map();
 const ownedAccountsCache = new Map();
-
-// Active ephemeral bubble tracker per user so old bubbles are deleted automatically
 const activeEphemeralByUser = new Map();
 
 function pruneExpiredStates() {
@@ -55,11 +52,6 @@ function pruneExpiredStates() {
   }
 }
 
-/**
- * Ensures each user only ever has at most ONE ephemeral bubble on screen.
- * Deletes the previous ephemeral reply when a new one is opened,
- * and optionally schedules auto-deletion after `autoDeleteMs`.
- */
 export async function registerActiveEphemeral(
   discordUserId,
   interaction,
@@ -687,7 +679,6 @@ export async function buildMyAccountsPayload(
     .setTitle("My Accounts")
     .setDescription(description);
 
-  // Side-by-side inline fields prevent awkward line wrapping and create a clean grid
   for (const [idx, acc] of accounts.entries()) {
     const platformLabel = formatPlatformName(acc.platform);
     const liveBadge = acc.is_live ? "LIVE" : "Offline";

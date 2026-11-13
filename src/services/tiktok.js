@@ -156,7 +156,6 @@ export async function resolveTikTokAccount(rawInput) {
     }
   }
 
-  // Fallback when TikTok withholds public HTML metadata: use validated normalized username
   return {
     platform: "tiktok",
     platformUserId: parsed.username,
@@ -224,7 +223,6 @@ export async function checkTikTokAccountLive(account) {
       const roomId = liveRoom?.roomId || user?.roomId || null;
       const status = Number(liveRoom?.status ?? user?.status ?? 0);
 
-      // In TikTok metadata, status === 2 means LIVE is currently active
       if (roomId && status === 2) {
         const startTimeSec = Number(liveRoom?.startTime);
         return {
