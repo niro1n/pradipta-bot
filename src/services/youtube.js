@@ -439,7 +439,9 @@ export async function checkYouTubeAccountsLive(accounts = [], { force = false } 
             isLive: true,
             available: true,
             streamId: video.id,
-            title: video.snippet.title || `${video.snippet.channelTitle} Live Stream`,
+            title: String(
+              video.snippet.title || `${video.snippet.channelTitle} LIVE STREAM`
+            ).toUpperCase(),
             streamUrl: `https://www.youtube.com/watch?v=${video.id}`,
             thumbnailUrl:
               video.snippet.thumbnails?.maxres?.url ||
