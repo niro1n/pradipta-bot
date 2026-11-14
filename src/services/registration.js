@@ -14,8 +14,9 @@ import supabase from "./database.js";
 import { resolveYouTubeChannel } from "./youtube.js";
 import { resolveTikTokAccount } from "./tiktok.js";
 
-const PANEL_TITLE = "Stream Registration";
+const PANEL_TITLE = "STREAM REGISTRATION";
 const LEGACY_PANEL_TITLES = new Set([
+  "STREAM REGISTRATION",
   "Stream Registration",
   "STREAM NOTIFICATION REGISTRATION",
 ]);
@@ -169,7 +170,56 @@ function formatPlatformName(platform) {
   return platform === "youtube" ? "YouTube" : "TikTok";
 }
 
-export function buildRegistrationPanelPayload() {
+async function fetchRegisteredStreamers() {
+  const { data: accounts, error } = await supabase
+    .from("stream_accounts")
+    .select(
+      "id, platform, username, profile_url, is_live, family_members(discord_user_id, discord_username)"
+    )
+    .eq("is_active", true)
+    .order("created_at", { ascending: true });
+
+  if (error || !accounts) {
+    return [];
+  }
+
+  return accounts;
+}
+
+function formatStreamerListField(accounts) {
+  if (!accounts || accounts.length === 0) {
+    return "Belum ada streamer terdaftar.";
+  }
+
+  const lines = [];
+  let currentLength = 0;
+
+  for (let i = 0; i < accounts.length; i += 1) {
+    const acc = accounts[i];
+    const discordId = acc.family_members?.discord_user_id;
+    const ownerTag = discordId
+      ? `<@${discordId}>`
+      : acc.family_members?.discord_username || acc.username;
+    const liveBadge = acc.is_live ? " `LIVE`" : "";
+    const line = `${i + 1}. ${ownerTag} · [${acc.username}](${acc.profile_url})${liveBadge}`;
+
+    if (currentLength + line.length + 35 > 1000) {
+      const remaining = accounts.length - i;
+      lines.push(`*+${remaining} streamer lainnya*`);
+      break;
+    }
+
+    lines.push(line);
+    currentLength += line.length + 1;
+  }
+
+  return lines.join("\n");
+}
+
+export function buildRegistrationPanelPayload(accounts = []) {
+  const youtubeAccounts = accounts.filter((a) => a.platform === "youtube");
+  const tiktokAccounts = accounts.filter((a) => a.platform === "tiktok");
+
   const embed = new EmbedBuilder()
     .setColor(EMBED_COLOR)
     .setTitle(PANEL_TITLE)
@@ -178,18 +228,28 @@ export function buildRegistrationPanelPayload() {
     )
     .addFields(
       {
-        name: "Platforms",
+        name: "PLATFORMS",
         value: "YouTube & TikTok",
         inline: true,
       },
       {
-        name: "Guide",
+        name: "GUIDE",
         value: "Select Platform → Register",
         inline: true,
       },
       {
-        name: "Ownership",
+        name: "OWNERSHIP",
         value: "Dikelola Pemilik Akun",
+        inline: true,
+      },
+      {
+        name: `YOUTUBE STREAMERS (${youtubeAccounts.length})`,
+        value: formatStreamerListField(youtubeAccounts),
+        inline: true,
+      },
+      {
+        name: `TIKTOK STREAMERS (${tiktokAccounts.length})`,
+        value: formatStreamerListField(tiktokAccounts),
         inline: true,
       }
     );
@@ -224,6 +284,9 @@ export function buildRegistrationPanelPayload() {
   return {
     embeds: [embed],
     components: [selectRow, buttonRow],
+    allowedMentions: {
+      parse: [],
+    },
   };
 }
 
@@ -247,7 +310,8 @@ export async function ensureRegistrationPanel(client) {
     return null;
   }
 
-  const payload = buildRegistrationPanelPayload();
+  const registeredAccounts = await fetchRegisteredStreamers();
+  const payload = buildRegistrationPanelPayload(registeredAccounts);
   const messages = await channel.messages.fetch({ limit: 25 }).catch(() => null);
 
   const existingPanel = messages?.find(
@@ -390,7 +454,7 @@ export async function handleOpenRegisterModal(interaction) {
 
   const modal = new ModalBuilder()
     .setCustomId(`reg_modal:${platform}`)
-    .setTitle(`Register ${label} Account`);
+    .setTitle(`REGISTER ${label.toUpperCase()} ACCOUNT`);
 
   const placeholder =
     platform === "youtube"
@@ -399,7 +463,7 @@ export async function handleOpenRegisterModal(interaction) {
 
   const input = new TextInputBuilder()
     .setCustomId("account_input")
-    .setLabel(`Username atau URL ${label}`)
+    .setLabel(`USERNAME ATAU URL ${label.toUpperCase()}`)
     .setStyle(TextInputStyle.Short)
     .setPlaceholder(placeholder)
     .setRequired(true)
@@ -446,23 +510,23 @@ export async function handleRegisterModalSubmit(interaction, platform) {
 
   const confirmEmbed = new EmbedBuilder()
     .setColor(EMBED_COLOR)
-    .setTitle("Confirm Stream Account")
+    .setTitle("CONFIRM STREAM ACCOUNT")
     .setDescription(
       "Pastikan detail akun streaming berikut sudah sesuai sebelum disimpan."
     )
     .addFields(
       {
-        name: "Platform",
+        name: "PLATFORM",
         value: formatPlatformName(resolved.platform),
         inline: true,
       },
       {
-        name: "Account",
+        name: "ACCOUNT",
         value: `[${resolved.username}](${resolved.profileUrl})`,
         inline: true,
       },
       {
-        name: "Monitoring",
+        name: "MONITORING",
         value: "Active",
         inline: true,
       }
@@ -561,25 +625,29 @@ export async function handleConfirmRegistration(interaction, confirmed) {
     cacheOwnedAccount(interaction.user.id, insertedAccount);
   }
 
+  if (interaction.client) {
+    ensureRegistrationPanel(interaction.client).catch(() => {});
+  }
+
   const successEmbed = new EmbedBuilder()
     .setColor(SUCCESS_COLOR)
-    .setTitle("Account Registered")
+    .setTitle("ACCOUNT REGISTERED")
     .setDescription(
       "Akun streaming berhasil ditambahkan ke sistem monitoring otomatis."
     )
     .addFields(
       {
-        name: "Platform",
+        name: "PLATFORM",
         value: formatPlatformName(pending.platform),
         inline: true,
       },
       {
-        name: "Account",
+        name: "ACCOUNT",
         value: `[${pending.username}](${pending.profileUrl})`,
         inline: true,
       },
       {
-        name: "Status",
+        name: "STATUS",
         value: "Active",
         inline: true,
       }
@@ -617,7 +685,7 @@ export async function buildMyAccountsPayload(
 
   const emptyEmbed = new EmbedBuilder()
     .setColor(EMBED_COLOR)
-    .setTitle("My Accounts")
+    .setTitle("MY ACCOUNTS")
     .setDescription(
       notice
         ? `${notice}\n\nBelum ada akun streaming yang terdaftar. Pilih platform pada panel lalu tekan **Register Account**.`
@@ -676,11 +744,11 @@ export async function buildMyAccountsPayload(
 
   const embed = new EmbedBuilder()
     .setColor(EMBED_COLOR)
-    .setTitle("My Accounts")
+    .setTitle("MY ACCOUNTS")
     .setDescription(description);
 
   for (const [idx, acc] of accounts.entries()) {
-    const platformLabel = formatPlatformName(acc.platform);
+    const platformLabel = formatPlatformName(acc.platform).toUpperCase();
     const liveBadge = acc.is_live ? "LIVE" : "Offline";
     const isSelected = acc.id === activeAccount.id;
     const prefix = isSelected && accounts.length > 1 ? "▸ " : "";
@@ -833,11 +901,11 @@ export async function handleEditAccountSelect(
   const label = formatPlatformName(account.platform);
   const modal = new ModalBuilder()
     .setCustomId(`acc_edit_modal:${account.id}`)
-    .setTitle(`Edit ${label} Account`);
+    .setTitle(`EDIT ${label.toUpperCase()} ACCOUNT`);
 
   const input = new TextInputBuilder()
     .setCustomId("account_input")
-    .setLabel(`Username atau URL ${label}`)
+    .setLabel(`USERNAME ATAU URL ${label.toUpperCase()}`)
     .setStyle(TextInputStyle.Short)
     .setValue(account.profile_url || account.username)
     .setRequired(true)
@@ -922,6 +990,10 @@ export async function handleEditAccountModalSubmit(interaction, accountId) {
 
   cacheOwnedAccount(interaction.user.id, updated);
 
+  if (interaction.client) {
+    ensureRegistrationPanel(interaction.client).catch(() => {});
+  }
+
   const { payload } = await buildMyAccountsPayload(interaction.user, {
     selectedAccountId: updated.id,
     notice: `Akun ${formatPlatformName(updated.platform)} diperbarui menjadi ${updated.username}.`,
@@ -954,18 +1026,18 @@ export async function handleDeleteAccountSelect(
 
   const deleteEmbed = new EmbedBuilder()
     .setColor(DANGER_COLOR)
-    .setTitle("Remove Account")
+    .setTitle("REMOVE ACCOUNT")
     .setDescription(
       "Apakah kamu yakin ingin menghapus akun berikut dari sistem monitoring?"
     )
     .addFields(
       {
-        name: "Platform",
+        name: "PLATFORM",
         value: formatPlatformName(account.platform),
         inline: true,
       },
       {
-        name: "Account",
+        name: "ACCOUNT",
         value: `[${account.username}](${account.profile_url})`,
         inline: true,
       }
@@ -1032,6 +1104,10 @@ export async function handleDeleteAccountConfirm(interaction, accountId) {
   }
 
   removeCachedOwnedAccount(interaction.user.id, accountId);
+
+  if (interaction.client) {
+    ensureRegistrationPanel(interaction.client).catch(() => {});
+  }
 
   const { isEmpty, payload } = await buildMyAccountsPayload(interaction.user, {
     notice: `Akun ${formatPlatformName(account.platform)} ${account.username} telah dihapus.`,
