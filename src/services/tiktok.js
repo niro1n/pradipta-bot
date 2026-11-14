@@ -229,7 +229,9 @@ export async function checkTikTokAccountLive(account) {
           isLive: true,
           available: true,
           streamId: String(roomId),
-          title: liveRoom?.title || `${account.username} sedang LIVE di TikTok!`,
+          title: String(
+            liveRoom?.title || `${account.username} SEDANG LIVE DI TIKTOK!`
+          ).toUpperCase(),
           streamUrl: liveUrl,
           thumbnailUrl: liveRoom?.coverUrl || user?.avatarLarger || null,
           startedAt:
@@ -255,7 +257,9 @@ export async function checkTikTokAccountLive(account) {
           isLive: true,
           available: true,
           streamId: String(roomId),
-          title: liveRoom?.title || `${account.username} sedang LIVE di TikTok!`,
+          title: String(
+            liveRoom?.title || `${account.username} SEDANG LIVE DI TIKTOK!`
+          ).toUpperCase(),
           streamUrl: liveUrl,
           thumbnailUrl: liveRoom?.coverUrl || user?.avatarLarger || null,
           startedAt:
