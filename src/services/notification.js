@@ -8,6 +8,7 @@ import config from "../config/config.js";
 import supabase from "./database.js";
 import { checkYouTubeAccountsLive } from "./youtube.js";
 import { checkTikTokAccountsLive } from "./tiktok.js";
+import { ensureRegistrationPanel } from "./registration.js";
 
 let monitorTimer = null;
 let isRunningCycle = false;
@@ -64,31 +65,35 @@ export async function sendLiveNotification(client, { account, member, liveInfo }
     ? `<@${discordUserId}>`
     : member?.discord_username || account.username;
 
+  const embedTitle = String(
+    liveInfo.title || `${account.username} SEDANG LIVE!`
+  ).toUpperCase();
+
   const embed = new EmbedBuilder()
     .setColor(getPlatformColor(account.platform))
-    .setTitle(liveInfo.title || `${account.username} sedang LIVE!`)
+    .setTitle(embedTitle)
     .setURL(liveInfo.streamUrl)
     .setDescription(
       `🔴 **${streamerMention}** sedang melakukan live streaming di **${platformLabel}**! Yuk ramaikan sekarang.`
     )
     .addFields(
       {
-        name: "👤 Streamer",
+        name: "👤 STREAMER",
         value: `${streamerMention} (\`${account.username}\`)`,
         inline: true,
       },
       {
-        name: "📡 Platform",
+        name: "📡 PLATFORM",
         value: platformLabel,
         inline: true,
       },
       {
-        name: "🔗 Link Live",
+        name: "🔗 LINK LIVE",
         value: `[Tonton Live](${liveInfo.streamUrl})`,
         inline: true,
       }
     )
-    .setFooter({ text: "Pradipta Family • Live Stream Notification" })
+    .setFooter({ text: "PRADIPTA FAMILY • LIVE STREAM NOTIFICATION" })
     .setTimestamp(liveInfo.startedAt ? new Date(liveInfo.startedAt) : new Date());
 
   if (
@@ -168,6 +173,10 @@ async function handleAccountStatusTransition(client, account, liveResult) {
         .eq("id", existingSession.id);
     }
 
+    if (!account.is_live) {
+      ensureRegistrationPanel(client).catch(() => {});
+    }
+
     await sendLiveNotification(client, {
       account,
       member: account.family_members,
@@ -191,6 +200,8 @@ async function handleAccountStatusTransition(client, account, liveResult) {
         .update({ ended_at: nowIso })
         .eq("account_id", account.id)
         .is("ended_at", null);
+
+      ensureRegistrationPanel(client).catch(() => {});
 
       console.log(
         `[MONITOR] ${account.platform.toUpperCase()} ${account.username} kini OFFLINE.`
@@ -256,6 +267,54 @@ export async function runLiveMonitorCycle(client, { force = false } = {}) {
   }
 }
 
+export async function syncRecentNotificationHeadings(client) {
+  const channelId = config.channels.notificationChannelId;
+  if (!channelId) return;
+
+  const channel =
+    client.channels.cache.get(channelId) ??
+    (await client.channels.fetch(channelId).catch(() => null));
+  if (!channel || !channel.isTextBased()) return;
+
+  const messages = await channel.messages.fetch({ limit: 20 }).catch(() => null);
+  if (!messages) return;
+
+  for (const msg of messages.values()) {
+    if (msg.author?.id !== client.user.id || !msg.embeds?.length) continue;
+
+    const oldEmbed = msg.embeds[0].toJSON();
+    const upperTitle = oldEmbed.title ? oldEmbed.title.toUpperCase() : oldEmbed.title;
+    const upperFields = (oldEmbed.fields || []).map((f) => ({
+      ...f,
+      name: String(f.name || "").toUpperCase(),
+    }));
+    const upperFooter = oldEmbed.footer?.text
+      ? { ...oldEmbed.footer, text: oldEmbed.footer.text.toUpperCase() }
+      : oldEmbed.footer;
+
+    const needsEdit =
+      oldEmbed.title !== upperTitle ||
+      oldEmbed.footer?.text !== upperFooter?.text ||
+      (oldEmbed.fields || []).some((f, idx) => f.name !== upperFields[idx]?.name);
+
+    if (needsEdit) {
+      const updatedEmbed = EmbedBuilder.from({
+        ...oldEmbed,
+        title: upperTitle,
+        fields: upperFields,
+        footer: upperFooter,
+      });
+
+      await msg.edit({
+        content: msg.content,
+        embeds: [updatedEmbed],
+        components: msg.components,
+        allowedMentions: { parse: [] },
+      }).catch(() => {});
+    }
+  }
+}
+
 export function stopLiveMonitor() {
   if (monitorTimer) {
     clearInterval(monitorTimer);
@@ -265,6 +324,8 @@ export function stopLiveMonitor() {
 
 export function startLiveMonitor(client) {
   stopLiveMonitor();
+
+  syncRecentNotificationHeadings(client).catch(() => {});
 
   const intervalMs = config.bot.monitorIntervalMs || 120000;
   console.log(
