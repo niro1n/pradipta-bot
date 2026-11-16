@@ -336,7 +336,7 @@ export function startLiveMonitor(client) {
     runLiveMonitorCycle(client).catch((err) =>
       console.error("[MONITOR] Initial cycle error:", err.message)
     );
-  }, 10000).unref();
+  }, 3000).unref();
 
   monitorTimer = setInterval(() => {
     runLiveMonitorCycle(client).catch((err) =>
