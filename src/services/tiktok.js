@@ -1,5 +1,5 @@
 const REQUEST_TIMEOUT_MS = 8000;
-const MIN_CHECK_INTERVAL_MS = 30 * 1000;
+const MIN_CHECK_INTERVAL_MS = 10 * 1000;
 const lastCheckedMap = new Map();
 
 const PUBLIC_HTML_HEADERS = {
@@ -7,6 +7,8 @@ const PUBLIC_HTML_HEADERS = {
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
   Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
   "Accept-Language": "en-US,en;q=0.9,id;q=0.8",
+  "Cache-Control": "no-cache, no-store, must-revalidate",
+  Pragma: "no-cache",
 };
 
 const PUBLIC_API_HEADERS = {
@@ -15,6 +17,8 @@ const PUBLIC_API_HEADERS = {
   Accept: "application/json, text/plain, */*",
   "Accept-Language": "en-US,en;q=0.9,id;q=0.8",
   Referer: "https://www.tiktok.com/",
+  "Cache-Control": "no-cache, no-store, must-revalidate",
+  Pragma: "no-cache",
 };
 
 export function parseTikTokInput(rawInput) {
@@ -85,7 +89,7 @@ export function parseTikTokInput(rawInput) {
 }
 
 async function fetchTikTokLiveRoomApi(cleanUsername) {
-  const apiUrl = `https://www.tiktok.com/api-live/user/room/?aid=1988&sourceType=54&uniqueId=${encodeURIComponent(cleanUsername)}`;
+  const apiUrl = `https://www.tiktok.com/api-live/user/room/?aid=1988&sourceType=54&uniqueId=${encodeURIComponent(cleanUsername)}&_=${Date.now()}`;
   const response = await fetch(apiUrl, {
     headers: PUBLIC_API_HEADERS,
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -375,11 +379,13 @@ export async function checkTikTokAccountsLive(accounts = [], { force = false } =
     return now - lastCheck >= MIN_CHECK_INTERVAL_MS;
   });
 
-  for (const account of eligibleAccounts) {
-    const res = await checkTikTokAccountLive(account);
-    lastCheckedMap.set(account.id, Date.now());
-    results.set(account.id, res);
-  }
+  await Promise.all(
+    eligibleAccounts.map(async (account) => {
+      const res = await checkTikTokAccountLive(account);
+      lastCheckedMap.set(account.id, Date.now());
+      results.set(account.id, res);
+    })
+  );
 
   return results;
 }
