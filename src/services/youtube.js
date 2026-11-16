@@ -2,13 +2,14 @@ import config from "../config/config.js";
 
 const YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3";
 const REQUEST_TIMEOUT_MS = 8000;
-const MIN_CHECK_INTERVAL_MS = 30 * 1000;
+const MIN_CHECK_INTERVAL_MS = 12 * 1000;
 const QUOTA_COOLDOWN_MS = 30 * 60 * 1000;
 
 let quotaCooldownUntil = 0;
 let totalQuotaUnitsUsed = 0;
 let totalApiRequests = 0;
 const lastCheckedMap = new Map();
+const finishedVideoIds = new Set();
 
 function sanitizeErrorMessage(message) {
   const apiKey = config.youtube.apiKey;
@@ -320,14 +321,17 @@ async function fetchRecentCandidateVideoIds(channelId) {
   ]);
 
   if (canonicalVideoId) {
+    finishedVideoIds.delete(canonicalVideoId);
     candidates.add(canonicalVideoId);
   }
 
   for (const vid of feedVideoIds) {
-    candidates.add(vid);
+    if (!finishedVideoIds.has(vid)) {
+      candidates.add(vid);
+    }
   }
 
-  if (candidates.size === 0) {
+  if (candidates.size === 0 && feedVideoIds.length === 0) {
     const uploadsPlaylistId = getUploadsPlaylistId(channelId);
     if (uploadsPlaylistId) {
       try {
@@ -344,7 +348,7 @@ async function fetchRecentCandidateVideoIds(channelId) {
         for (const item of playlistData?.items || []) {
           const videoId =
             item.contentDetails?.videoId || item.snippet?.resourceId?.videoId;
-          if (videoId) {
+          if (videoId && !finishedVideoIds.has(videoId)) {
             candidates.add(videoId);
           }
         }
@@ -386,32 +390,28 @@ export async function checkYouTubeAccountsLive(accounts = [], { force = false } 
     return results;
   }
 
-  const accountCandidatesMap = new Map();
   const allCandidateVideoIds = new Set();
 
-  for (const account of eligibleAccounts) {
-    try {
-      const videoIds = await fetchRecentCandidateVideoIds(account.platform_user_id);
-      lastCheckedMap.set(account.id, Date.now());
-      accountCandidatesMap.set(account.id, videoIds);
-      for (const vid of videoIds) {
-        allCandidateVideoIds.add(vid);
+  await Promise.all(
+    eligibleAccounts.map(async (account) => {
+      try {
+        const videoIds = await fetchRecentCandidateVideoIds(account.platform_user_id);
+        lastCheckedMap.set(account.id, Date.now());
+        for (const vid of videoIds) {
+          allCandidateVideoIds.add(vid);
+        }
+      } catch (error) {
+        console.error(
+          `[YouTube Monitor] Gagal memeriksa kandidat video untuk ${account.username}: ${error.message}`
+        );
+        results.set(account.id, {
+          isLive: false,
+          available: false,
+          error: error.message,
+        });
       }
-    } catch (error) {
-      console.error(
-        `[YouTube Monitor] Gagal memeriksa kandidat video untuk ${account.username}: ${error.message}`
-      );
-      results.set(account.id, {
-        isLive: false,
-        available: false,
-        error: error.message,
-      });
-
-      if (Date.now() < quotaCooldownUntil) {
-        break;
-      }
-    }
-  }
+    })
+  );
 
   const videoIdArray = Array.from(allCandidateVideoIds);
   const liveVideoByChannelId = new Map();
@@ -429,7 +429,8 @@ export async function checkYouTubeAccountsLive(accounts = [], { force = false } 
       );
 
       for (const video of videosData?.items || []) {
-        const isLiveBroadcast = video.snippet?.liveBroadcastContent === "live";
+        const broadcastContent = video.snippet?.liveBroadcastContent || "none";
+        const isLiveBroadcast = broadcastContent === "live";
         const hasActiveStreamTime =
           Boolean(video.liveStreamingDetails?.actualStartTime) &&
           !video.liveStreamingDetails?.actualEndTime;
@@ -452,6 +453,14 @@ export async function checkYouTubeAccountsLive(accounts = [], { force = false } 
               video.liveStreamingDetails?.actualStartTime || new Date().toISOString(),
             channelTitle: video.snippet.channelTitle || null,
           });
+        } else if (
+          broadcastContent === "none" &&
+          (!video.liveStreamingDetails || video.liveStreamingDetails.actualEndTime)
+        ) {
+          if (finishedVideoIds.size > 500) {
+            finishedVideoIds.clear();
+          }
+          finishedVideoIds.add(video.id);
         }
       }
     } catch (error) {
