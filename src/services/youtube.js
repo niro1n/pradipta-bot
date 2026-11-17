@@ -269,6 +269,8 @@ async function discoverLiveVideoIdFromCanonical(channelId) {
         "User-Agent":
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Accept-Language": "en-US,en;q=0.9",
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        Pragma: "no-cache",
       },
       signal: AbortSignal.timeout(6000),
     });
@@ -297,6 +299,8 @@ async function discoverVideoIdsFromPublicFeed(channelId) {
           "User-Agent":
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
           Accept: "application/atom+xml,application/xml,text/xml;q=0.9,*/*;q=0.8",
+          "Cache-Control": "no-cache, no-store, must-revalidate",
+          Pragma: "no-cache",
         },
         signal: AbortSignal.timeout(6000),
       }
@@ -388,6 +392,10 @@ export async function checkYouTubeAccountsLive(accounts = [], { force = false } 
 
   if (eligibleAccounts.length === 0) {
     return results;
+  }
+
+  if (lastCheckedMap.size > 500) {
+    lastCheckedMap.clear();
   }
 
   const allCandidateVideoIds = new Set();
