@@ -33,7 +33,9 @@ const OWNED_ACCOUNT_CACHE_TTL_MS = 30 * 60 * 1000;
 export const selectedPlatforms = new Map();
 export const pendingRegistrations = new Map();
 const ownedAccountsCache = new Map();
+const memberCacheByDiscordId = new Map();
 const activeEphemeralByUser = new Map();
+let panelRefreshPromise = null;
 
 function pruneExpiredStates() {
   const now = Date.now();
@@ -294,7 +296,7 @@ export function buildRegistrationPanelPayload(accounts = []) {
   };
 }
 
-export async function ensureRegistrationPanel(client) {
+async function performRegistrationPanelSync(client) {
   const channelId = config.channels.registerChannelId;
   if (!channelId) {
     console.warn(
@@ -338,8 +340,8 @@ export async function ensureRegistrationPanel(client) {
 
   if (matchingPanels.length > 0) {
     const [primaryPanel, ...duplicates] = matchingPanels;
-    for (const dup of duplicates) {
-      await dup.delete().catch(() => {});
+    if (duplicates.length > 0) {
+      await Promise.all(duplicates.map((dup) => dup.delete().catch(() => {})));
     }
 
     const updatedPanel = await primaryPanel.edit(payload);
@@ -354,6 +356,38 @@ export async function ensureRegistrationPanel(client) {
     `[REGISTRATION] Panel registrasi baru dibuat di #${channel.name} (id: ${created.id}).`
   );
   return created;
+}
+
+export async function ensureRegistrationPanel(client) {
+  if (panelRefreshPromise) {
+    return panelRefreshPromise;
+  }
+
+  panelRefreshPromise = performRegistrationPanelSync(client).finally(() => {
+    panelRefreshPromise = null;
+  });
+
+  return panelRefreshPromise;
+}
+
+async function resolveFamilyMemberByDiscordId(discordUserId) {
+  const cached = memberCacheByDiscordId.get(discordUserId);
+  if (cached) return cached;
+
+  const { data: member } = await supabase
+    .from("family_members")
+    .select("id, discord_user_id, discord_username")
+    .eq("discord_user_id", discordUserId)
+    .maybeSingle();
+
+  if (member) {
+    if (memberCacheByDiscordId.size > 500) {
+      memberCacheByDiscordId.clear();
+    }
+    memberCacheByDiscordId.set(discordUserId, member);
+  }
+
+  return member || null;
 }
 
 export async function getOrCreateFamilyMember(discordUser) {
@@ -376,7 +410,9 @@ export async function getOrCreateFamilyMember(discordUser) {
         .from("family_members")
         .update({ discord_username: discordUsername })
         .eq("id", existing.id);
+      existing.discord_username = discordUsername;
     }
+    memberCacheByDiscordId.set(discordUserId, existing);
     return existing;
   }
 
@@ -393,6 +429,7 @@ export async function getOrCreateFamilyMember(discordUser) {
     throw new Error(`Gagal menyimpan data anggota: ${insertError.message}`);
   }
 
+  memberCacheByDiscordId.set(discordUserId, created);
   return created;
 }
 
@@ -402,6 +439,9 @@ async function findExistingStreamAccount({
   username,
   excludeAccountId = null,
 }) {
+  const normalizedUsername = String(username || "").trim();
+  const normalizedPlatformId = String(platformUserId || "").trim();
+
   let query = supabase
     .from("stream_accounts")
     .select("id, member_id, platform, username, platform_user_id")
@@ -411,26 +451,22 @@ async function findExistingStreamAccount({
     query = query.neq("id", excludeAccountId);
   }
 
-  const { data: accounts, error } = await query;
+  if (normalizedPlatformId && normalizedUsername) {
+    query = query.or(
+      `platform_user_id.eq.${normalizedPlatformId},username.ilike.${normalizedUsername}`
+    );
+  } else if (normalizedPlatformId) {
+    query = query.eq("platform_user_id", normalizedPlatformId);
+  } else if (normalizedUsername) {
+    query = query.ilike("username", normalizedUsername);
+  }
+
+  const { data: accounts, error } = await query.limit(1);
   if (error) {
     throw new Error(`Gagal memeriksa duplikasi akun: ${error.message}`);
   }
 
-  const normalizedUsername = String(username || "").trim().toLowerCase();
-  const normalizedPlatformId = String(platformUserId || "").trim().toLowerCase();
-
-  return (
-    (accounts || []).find((acc) => {
-      const samePlatformId =
-        normalizedPlatformId &&
-        String(acc.platform_user_id || "").trim().toLowerCase() ===
-          normalizedPlatformId;
-      const sameUsername =
-        normalizedUsername &&
-        String(acc.username || "").trim().toLowerCase() === normalizedUsername;
-      return samePlatformId || sameUsername;
-    }) || null
-  );
+  return accounts?.[0] || null;
 }
 
 async function resolvePlatformAccount(platform, rawInput) {
@@ -698,11 +734,7 @@ export async function buildMyAccountsPayload(
   discordUser,
   { selectedAccountId = null, notice = null } = {}
 ) {
-  const { data: member } = await supabase
-    .from("family_members")
-    .select("id, discord_user_id, discord_username")
-    .eq("discord_user_id", discordUser.id)
-    .maybeSingle();
+  const member = await resolveFamilyMemberByDiscordId(discordUser.id);
 
   const emptyEmbed = new EmbedBuilder()
     .setColor(EMBED_COLOR)
@@ -863,12 +895,7 @@ export async function getVerifiedOwnedAccount(discordUserId, accountId) {
     return { member: null, account: null };
   }
 
-  const { data: member } = await supabase
-    .from("family_members")
-    .select("id, discord_user_id")
-    .eq("discord_user_id", discordUserId)
-    .maybeSingle();
-
+  const member = await resolveFamilyMemberByDiscordId(discordUserId);
   if (!member) {
     return { member: null, account: null };
   }
@@ -1108,8 +1135,10 @@ export async function handleDeleteAccountConfirm(interaction, accountId) {
     return;
   }
 
-  await supabase.from("notification_logs").delete().eq("account_id", account.id);
-  await supabase.from("live_sessions").delete().eq("account_id", account.id);
+  await Promise.all([
+    supabase.from("notification_logs").delete().eq("account_id", account.id),
+    supabase.from("live_sessions").delete().eq("account_id", account.id),
+  ]);
 
   const { data: deleted, error } = await supabase
     .from("stream_accounts")
