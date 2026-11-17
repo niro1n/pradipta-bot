@@ -4,10 +4,51 @@ import {
   GatewayIntentBits,
 } from "discord.js";
 import config from "../config/config.js";
+import supabase from "./database.js";
 
 let rotationTimer = null;
 let currentSlideIndex = 0;
 let cachedHumanCount = null;
+let cachedStreamerStats = {
+  totalStreamers: 0,
+  youtubeStreamers: 0,
+  tiktokStreamers: 0,
+};
+
+export async function fetchStreamerStats() {
+  try {
+    const { data: accounts, error } = await supabase
+      .from("stream_accounts")
+      .select("member_id, platform")
+      .eq("is_active", true);
+
+    if (error || !accounts) {
+      return cachedStreamerStats;
+    }
+
+    const totalSet = new Set();
+    const youtubeSet = new Set();
+    const tiktokSet = new Set();
+
+    for (const acc of accounts) {
+      if (!acc.member_id) continue;
+      totalSet.add(acc.member_id);
+      if (acc.platform === "youtube") {
+        youtubeSet.add(acc.member_id);
+      } else if (acc.platform === "tiktok") {
+        tiktokSet.add(acc.member_id);
+      }
+    }
+
+    cachedStreamerStats = {
+      totalStreamers: totalSet.size,
+      youtubeStreamers: youtubeSet.size,
+      tiktokStreamers: tiktokSet.size,
+    };
+  } catch {}
+
+  return cachedStreamerStats;
+}
 
 export async function hasGuildMembersIntent(token) {
   try {
@@ -76,30 +117,43 @@ export function countNonAppMembers(members) {
   return members.filter((member) => !member.user?.bot).size;
 }
 
-export function buildPresenceSlides(humanCount) {
-  if (typeof humanCount !== "number") {
-    return [
-      {
-        name: `🦅 ${config.bot.activity.toUpperCase()}`,
-        type: ActivityType.Watching,
-      },
-    ];
-  }
+export function buildPresenceSlides(humanCount, streamerStats = cachedStreamerStats) {
+  const slides = [];
 
-  return [
-    {
+  if (typeof humanCount === "number") {
+    slides.push({
       name: `👑 ${humanCount} FAMILY MEMBERS`,
       type: ActivityType.Watching,
-    },
-    {
-      name: "🦅 PRADIPTA FAMILY",
-      type: ActivityType.Watching,
-    },
-  ];
+    });
+  }
+
+  if (streamerStats && typeof streamerStats.totalStreamers === "number") {
+    slides.push(
+      {
+        name: `🎥 ${streamerStats.totalStreamers} TOTAL STREAMERS`,
+        type: ActivityType.Watching,
+      },
+      {
+        name: `📺 ${streamerStats.youtubeStreamers} YOUTUBE STREAMERS`,
+        type: ActivityType.Watching,
+      },
+      {
+        name: `🎵 ${streamerStats.tiktokStreamers} TIKTOK STREAMERS`,
+        type: ActivityType.Watching,
+      }
+    );
+  }
+
+  slides.push({
+    name: `🦅 ${config.bot.activity.toUpperCase()}`,
+    type: ActivityType.Watching,
+  });
+
+  return slides;
 }
 
 function applySlide(client, slide) {
-  if (!client?.user) return;
+  if (!client?.user || !slide) return;
 
   client.user.setPresence({
     activities: [slide],
@@ -118,16 +172,22 @@ function startPresenceRotation(client) {
   stopPresenceRotation();
 
   const intervalMs = config.bot.presenceIntervalMs || 15000;
-  rotationTimer = setInterval(() => {
-    const slides = buildPresenceSlides(cachedHumanCount);
+  rotationTimer = setInterval(async () => {
+    const slides = buildPresenceSlides(cachedHumanCount, cachedStreamerStats);
     if (slides.length <= 1) return;
 
     currentSlideIndex = (currentSlideIndex + 1) % slides.length;
     applySlide(client, slides[currentSlideIndex]);
+
+    if (currentSlideIndex === 0) {
+      await fetchStreamerStats();
+    }
   }, intervalMs);
 }
 
 export async function updateMemberPresence(client, { forceFetch = false } = {}) {
+  await fetchStreamerStats();
+
   const hasMembersIntent = client.options.intents.has(
     GatewayIntentBits.GuildMembers
   );
@@ -143,8 +203,9 @@ export async function updateMemberPresence(client, { forceFetch = false } = {}) 
       );
     }
 
-    const fallbackSlides = buildPresenceSlides(null);
+    const fallbackSlides = buildPresenceSlides(null, cachedStreamerStats);
     applySlide(client, fallbackSlides[0]);
+    startPresenceRotation(client);
 
     return {
       mode: "fallback",
@@ -162,7 +223,7 @@ export async function updateMemberPresence(client, { forceFetch = false } = {}) 
     console.warn(
       "[PRESENCE WARN] Target server tidak ditemukan, menggunakan status default."
     );
-    const fallbackSlides = buildPresenceSlides(null);
+    const fallbackSlides = buildPresenceSlides(null, cachedStreamerStats);
     applySlide(client, fallbackSlides[0]);
 
     return {
@@ -186,7 +247,7 @@ export async function updateMemberPresence(client, { forceFetch = false } = {}) 
   cachedHumanCount = humanCount;
   currentSlideIndex = 0;
 
-  const slides = buildPresenceSlides(humanCount);
+  const slides = buildPresenceSlides(humanCount, cachedStreamerStats);
   applySlide(client, slides[0]);
   startPresenceRotation(client);
 
