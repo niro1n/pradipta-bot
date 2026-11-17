@@ -66,7 +66,7 @@ export async function sendLiveNotification(client, { account, member, liveInfo }
     : member?.discord_username || account.username;
 
   const embedTitle = String(
-    liveInfo.title || `${account.username} SEDANG LIVE!`
+    liveInfo.title || `${account.username} LAGI LIVE!`
   ).toUpperCase();
 
   const embed = new EmbedBuilder()
@@ -74,7 +74,7 @@ export async function sendLiveNotification(client, { account, member, liveInfo }
     .setTitle(embedTitle)
     .setURL(liveInfo.streamUrl)
     .setDescription(
-      `🔴 **${streamerMention}** sedang melakukan live streaming di **${platformLabel}**! Yuk ramaikan sekarang.`
+      `${streamerMention} baru mulai live di **${platformLabel}**. Langsung mampir lewat link di bawah.`
     )
     .addFields(
       {
@@ -108,14 +108,14 @@ export async function sendLiveNotification(client, { account, member, liveInfo }
       .setLabel(`Tonton di ${platformLabel}`)
       .setStyle(ButtonStyle.Link)
       .setURL(liveInfo.streamUrl)
-      .setEmoji("🔴")
   );
 
   await channel.send({
-    content: `🔴 **LIVE ALERT!** ${streamerMention} sedang live di **${platformLabel}**!`,
+    content: `@everyone @here ${streamerMention} lagi live di **${platformLabel}**.`,
     embeds: [embed],
     components: [row],
     allowedMentions: {
+      parse: ["everyone"],
       users: discordUserId ? [discordUserId] : [],
     },
   });
