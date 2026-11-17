@@ -12,6 +12,7 @@ import { ensureRegistrationPanel } from "./registration.js";
 
 let monitorTimer = null;
 let isRunningCycle = false;
+const notifiedStreamsCache = new Set();
 
 function formatPlatformLabel(platform) {
   return platform === "youtube" ? "YouTube" : "TikTok";
@@ -30,6 +31,11 @@ export async function sendLiveNotification(client, { account, member, liveInfo }
     return { sent: false, reason: "missing_channel_id" };
   }
 
+  const cacheKey = `${account.id}:${liveInfo.streamId}:${channelId}`;
+  if (notifiedStreamsCache.has(cacheKey)) {
+    return { sent: false, duplicate: true };
+  }
+
   const { data: existingLog, error: checkError } = await supabase
     .from("notification_logs")
     .select("id")
@@ -45,6 +51,7 @@ export async function sendLiveNotification(client, { account, member, liveInfo }
   }
 
   if (existingLog?.id) {
+    notifiedStreamsCache.add(cacheKey);
     return { sent: false, duplicate: true };
   }
 
@@ -120,6 +127,11 @@ export async function sendLiveNotification(client, { account, member, liveInfo }
     },
   });
 
+  if (notifiedStreamsCache.size > 500) {
+    notifiedStreamsCache.clear();
+  }
+  notifiedStreamsCache.add(cacheKey);
+
   const { error: logError } = await supabase.from("notification_logs").insert({
     account_id: account.id,
     stream_id: liveInfo.streamId,
@@ -140,79 +152,66 @@ export async function sendLiveNotification(client, { account, member, liveInfo }
   return { sent: true, streamId: liveInfo.streamId };
 }
 
-async function handleAccountStatusTransition(client, account, liveResult) {
-  const nowIso = new Date().toISOString();
+async function handleAccountLiveState(client, account, liveResult, nowIso) {
+  await supabase
+    .from("stream_accounts")
+    .update({
+      is_live: true,
+      last_checked_at: nowIso,
+    })
+    .eq("id", account.id);
 
-  if (liveResult.isLive && liveResult.streamId) {
+  const { data: existingSession } = await supabase
+    .from("live_sessions")
+    .select("id, ended_at")
+    .eq("account_id", account.id)
+    .eq("stream_id", liveResult.streamId)
+    .maybeSingle();
+
+  if (!existingSession) {
+    await supabase.from("live_sessions").insert({
+      account_id: account.id,
+      stream_id: liveResult.streamId,
+      title: liveResult.title || null,
+      started_at: liveResult.startedAt || nowIso,
+    });
+  } else if (existingSession.ended_at) {
     await supabase
+      .from("live_sessions")
+      .update({ ended_at: null })
+      .eq("id", existingSession.id);
+  }
+
+  await sendLiveNotification(client, {
+    account,
+    member: account.family_members,
+    liveInfo: liveResult,
+  });
+
+  return !account.is_live;
+}
+
+async function handleAccountOfflineTransition(account, nowIso) {
+  await Promise.all([
+    supabase
       .from("stream_accounts")
       .update({
-        is_live: true,
+        is_live: false,
         last_checked_at: nowIso,
       })
-      .eq("id", account.id);
-
-    const { data: existingSession } = await supabase
+      .eq("id", account.id),
+    supabase
       .from("live_sessions")
-      .select("id, ended_at")
+      .update({ ended_at: nowIso })
       .eq("account_id", account.id)
-      .eq("stream_id", liveResult.streamId)
-      .maybeSingle();
+      .is("ended_at", null),
+  ]);
 
-    if (!existingSession) {
-      await supabase.from("live_sessions").insert({
-        account_id: account.id,
-        stream_id: liveResult.streamId,
-        title: liveResult.title || null,
-        started_at: liveResult.startedAt || nowIso,
-      });
-    } else if (existingSession.ended_at) {
-      await supabase
-        .from("live_sessions")
-        .update({ ended_at: null })
-        .eq("id", existingSession.id);
-    }
+  console.log(
+    `[MONITOR] ${account.platform.toUpperCase()} ${account.username} kini OFFLINE.`
+  );
 
-    if (!account.is_live) {
-      ensureRegistrationPanel(client).catch(() => {});
-    }
-
-    await sendLiveNotification(client, {
-      account,
-      member: account.family_members,
-      liveInfo: liveResult,
-    });
-    return;
-  }
-
-  if (liveResult.available !== false) {
-    if (account.is_live) {
-      await supabase
-        .from("stream_accounts")
-        .update({
-          is_live: false,
-          last_checked_at: nowIso,
-        })
-        .eq("id", account.id);
-
-      await supabase
-        .from("live_sessions")
-        .update({ ended_at: nowIso })
-        .eq("account_id", account.id)
-        .is("ended_at", null);
-
-      ensureRegistrationPanel(client).catch(() => {});
-
-      console.log(
-        `[MONITOR] ${account.platform.toUpperCase()} ${account.username} kini OFFLINE.`
-      );
-    } else {
-      await supabase
-        .from("stream_accounts")
-        .update({ last_checked_at: nowIso })
-        .eq("id", account.id);
-    }
-  }
+  return true;
 }
 
 export async function runLiveMonitorCycle(client, { force = false } = {}) {
@@ -244,6 +243,10 @@ export async function runLiveMonitorCycle(client, { force = false } = {}) {
       checkTikTokAccountsLive(tiktokAccounts, { force }),
     ]);
 
+    const nowIso = new Date().toISOString();
+    const unchangedOfflineIds = [];
+    let panelNeedsRefresh = false;
+
     for (const account of accounts) {
       const liveResult =
         account.platform === "youtube"
@@ -253,12 +256,38 @@ export async function runLiveMonitorCycle(client, { force = false } = {}) {
       if (!liveResult) continue;
 
       try {
-        await handleAccountStatusTransition(client, account, liveResult);
+        if (liveResult.isLive && liveResult.streamId) {
+          const transitioned = await handleAccountLiveState(
+            client,
+            account,
+            liveResult,
+            nowIso
+          );
+          if (transitioned) panelNeedsRefresh = true;
+        } else if (liveResult.available !== false) {
+          if (account.is_live) {
+            await handleAccountOfflineTransition(account, nowIso);
+            panelNeedsRefresh = true;
+          } else {
+            unchangedOfflineIds.push(account.id);
+          }
+        }
       } catch (err) {
         console.error(
           `[MONITOR] Error saat memproses status ${account.username}: ${err.message}`
         );
       }
+    }
+
+    if (unchangedOfflineIds.length > 0) {
+      await supabase
+        .from("stream_accounts")
+        .update({ last_checked_at: nowIso })
+        .in("id", unchangedOfflineIds);
+    }
+
+    if (panelNeedsRefresh) {
+      ensureRegistrationPanel(client).catch(() => {});
     }
   } catch (error) {
     console.error(`[MONITOR] Kesalahan pada siklus monitoring: ${error.message}`);
@@ -327,7 +356,7 @@ export function startLiveMonitor(client) {
 
   syncRecentNotificationHeadings(client).catch(() => {});
 
-  const intervalMs = config.bot.monitorIntervalMs || 120000;
+  const intervalMs = config.bot.monitorIntervalMs || 15000;
   console.log(
     `[MONITOR] Live stream monitor aktif (interval: ${Math.round(intervalMs / 1000)}s)`
   );
@@ -343,4 +372,5 @@ export function startLiveMonitor(client) {
       console.error("[MONITOR] Cycle error:", err.message)
     );
   }, intervalMs);
+  monitorTimer.unref?.();
 }
