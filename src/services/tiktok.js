@@ -2,24 +2,26 @@ const REQUEST_TIMEOUT_MS = 8000;
 const MIN_CHECK_INTERVAL_MS = 10 * 1000;
 const lastCheckedMap = new Map();
 
-const PUBLIC_HTML_HEADERS = {
+const BASE_HEADERS = {
   "User-Agent":
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
   "Accept-Language": "en-US,en;q=0.9,id;q=0.8",
   "Cache-Control": "no-cache, no-store, must-revalidate",
   Pragma: "no-cache",
 };
 
-const PUBLIC_API_HEADERS = {
-  "User-Agent":
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-  Accept: "application/json, text/plain, */*",
-  "Accept-Language": "en-US,en;q=0.9,id;q=0.8",
-  Referer: "https://www.tiktok.com/",
-  "Cache-Control": "no-cache, no-store, must-revalidate",
-  Pragma: "no-cache",
+const PUBLIC_HTML_HEADERS = {
+  ...BASE_HEADERS,
+  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 };
+
+const PUBLIC_API_HEADERS = {
+  ...BASE_HEADERS,
+  Accept: "application/json, text/plain, */*",
+  Referer: "https://www.tiktok.com/",
+};
+
+const NOT_FOUND_CODES = new Set([10202, 10221, 10222]);
 
 export function parseTikTokInput(rawInput) {
   const input = typeof rawInput === "string" ? rawInput.trim() : "";
@@ -131,6 +133,19 @@ function extractRehydrationJson(html) {
   return null;
 }
 
+function formatResolvedTikTokUser(user, fallbackUsername) {
+  const uniqueId = (user.uniqueId || fallbackUsername).toLowerCase();
+  return {
+    platform: "tiktok",
+    platformUserId: String(user.id || uniqueId),
+    username: `@${uniqueId}`,
+    displayName: user.nickname || `@${uniqueId}`,
+    profileUrl: `https://www.tiktok.com/@${uniqueId}`,
+    avatarUrl: user.avatarLarger || user.avatarMedium || null,
+    verifiedViaPublicPage: true,
+  };
+}
+
 export async function resolveTikTokAccount(rawInput) {
   const parsed = parseTikTokInput(rawInput);
 
@@ -138,26 +153,14 @@ export async function resolveTikTokAccount(rawInput) {
     const apiResult = await fetchTikTokLiveRoomApi(parsed.username);
     if (apiResult.ok) {
       if (
-        apiResult.statusCode === 10202 ||
-        apiResult.statusCode === 10221 ||
-        apiResult.statusCode === 10222 ||
+        NOT_FOUND_CODES.has(apiResult.statusCode) ||
         apiResult.message === "user_not_found"
       ) {
         throw new Error(`Akun TikTok ${parsed.handle} tidak ditemukan.`);
       }
 
-      const user = apiResult.user;
-      if (user?.id || user?.uniqueId) {
-        const uniqueId = (user.uniqueId || parsed.username).toLowerCase();
-        return {
-          platform: "tiktok",
-          platformUserId: String(user.id || uniqueId),
-          username: `@${uniqueId}`,
-          displayName: user.nickname || `@${uniqueId}`,
-          profileUrl: `https://www.tiktok.com/@${uniqueId}`,
-          avatarUrl: user.avatarLarger || user.avatarMedium || null,
-          verifiedViaPublicPage: true,
-        };
+      if (apiResult.user?.id || apiResult.user?.uniqueId) {
+        return formatResolvedTikTokUser(apiResult.user, parsed.username);
       }
     }
   } catch (error) {
@@ -181,22 +184,13 @@ export async function resolveTikTokAccount(rawInput) {
           extracted.data?.__DEFAULT_SCOPE__?.["webapp.user-detail"];
         const statusCode = Number(userDetail?.statusCode ?? 0);
 
-        if (statusCode === 10202 || statusCode === 10221 || statusCode === 10222) {
+        if (NOT_FOUND_CODES.has(statusCode)) {
           throw new Error(`Akun TikTok ${parsed.handle} tidak ditemukan.`);
         }
 
         const user = userDetail?.userInfo?.user;
         if (user?.id || user?.uniqueId) {
-          const uniqueId = (user.uniqueId || parsed.username).toLowerCase();
-          return {
-            platform: "tiktok",
-            platformUserId: String(user.id || uniqueId),
-            username: `@${uniqueId}`,
-            displayName: user.nickname || `@${uniqueId}`,
-            profileUrl: `https://www.tiktok.com/@${uniqueId}`,
-            avatarUrl: user.avatarLarger || user.avatarMedium || null,
-            verifiedViaPublicPage: true,
-          };
+          return formatResolvedTikTokUser(user, parsed.username);
         }
       }
     }
@@ -378,6 +372,10 @@ export async function checkTikTokAccountsLive(accounts = [], { force = false } =
     const lastCheck = lastCheckedMap.get(acc.id) || 0;
     return now - lastCheck >= MIN_CHECK_INTERVAL_MS;
   });
+
+  if (lastCheckedMap.size > 500) {
+    lastCheckedMap.clear();
+  }
 
   await Promise.all(
     eligibleAccounts.map(async (account) => {
