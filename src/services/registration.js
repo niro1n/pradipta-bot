@@ -13,6 +13,7 @@ import config from "../config/config.js";
 import supabase from "./database.js";
 import { resolveYouTubeChannel } from "./youtube.js";
 import { resolveTikTokAccount } from "./tiktok.js";
+import { fetchStreamerStats } from "./presenceService.js";
 
 const PANEL_TITLE = "STREAM REGISTRATION";
 const LEGACY_PANEL_TITLES = new Set([
@@ -174,7 +175,7 @@ async function fetchRegisteredStreamers() {
   const { data: accounts, error } = await supabase
     .from("stream_accounts")
     .select(
-      "id, platform, username, profile_url, is_live, family_members(discord_user_id, discord_username)"
+      "id, member_id, platform, username, profile_url, is_live, family_members(discord_user_id, discord_username)"
     )
     .eq("is_active", true)
     .order("created_at", { ascending: true });
@@ -188,7 +189,7 @@ async function fetchRegisteredStreamers() {
 
 function formatStreamerListField(accounts) {
   if (!accounts || accounts.length === 0) {
-    return "Belum ada streamer terdaftar.";
+    return "Belum ada akun terdaftar.";
   }
 
   const lines = [];
@@ -205,7 +206,7 @@ function formatStreamerListField(accounts) {
 
     if (currentLength + line.length + 35 > 1000) {
       const remaining = accounts.length - i;
-      lines.push(`*+${remaining} streamer lainnya*`);
+      lines.push(`*+${remaining} lainnya*`);
       break;
     }
 
@@ -219,27 +220,30 @@ function formatStreamerListField(accounts) {
 export function buildRegistrationPanelPayload(accounts = []) {
   const youtubeAccounts = accounts.filter((a) => a.platform === "youtube");
   const tiktokAccounts = accounts.filter((a) => a.platform === "tiktok");
+  const uniqueMemberIds = new Set(
+    accounts.map((a) => a.member_id || a.family_members?.discord_user_id).filter(Boolean)
+  );
 
   const embed = new EmbedBuilder()
     .setColor(EMBED_COLOR)
     .setTitle(PANEL_TITLE)
     .setDescription(
-      "Daftarkan akun streaming kamu untuk menerima notifikasi otomatis ke server saat memulai live streaming."
+      "Daftarkan akun YouTube atau TikTok kamu biar notifikasi live otomatis dikirim ke server waktu kamu mulai live."
     )
     .addFields(
       {
-        name: "PLATFORMS",
-        value: "YouTube & TikTok",
+        name: "TOTAL STREAMERS",
+        value: `${uniqueMemberIds.size} Streamer`,
         inline: true,
       },
       {
         name: "GUIDE",
-        value: "Select Platform → Register",
+        value: "Pilih Platform → Register",
         inline: true,
       },
       {
         name: "OWNERSHIP",
-        value: "Dikelola Pemilik Akun",
+        value: "Hanya Pemilik Akun",
         inline: true,
       },
       {
@@ -311,17 +315,34 @@ export async function ensureRegistrationPanel(client) {
   }
 
   const registeredAccounts = await fetchRegisteredStreamers();
+  fetchStreamerStats().catch(() => {});
   const payload = buildRegistrationPanelPayload(registeredAccounts);
-  const messages = await channel.messages.fetch({ limit: 25 }).catch(() => null);
 
-  const existingPanel = messages?.find(
-    (msg) =>
-      msg.author?.id === client.user.id &&
-      LEGACY_PANEL_TITLES.has(msg.embeds?.[0]?.title)
-  );
+  let messages;
+  try {
+    messages = await channel.messages.fetch({ limit: 25 });
+  } catch (err) {
+    console.warn(
+      `[REGISTRATION] Gagal membaca daftar pesan di #${channel.name}: ${err.message}`
+    );
+    return null;
+  }
 
-  if (existingPanel) {
-    const updatedPanel = await existingPanel.edit(payload);
+  const matchingPanels = [...messages.values()]
+    .filter(
+      (msg) =>
+        msg.author?.id === client.user.id &&
+        LEGACY_PANEL_TITLES.has(msg.embeds?.[0]?.title)
+    )
+    .sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+
+  if (matchingPanels.length > 0) {
+    const [primaryPanel, ...duplicates] = matchingPanels;
+    for (const dup of duplicates) {
+      await dup.delete().catch(() => {});
+    }
+
+    const updatedPanel = await primaryPanel.edit(payload);
     console.log(
       `[REGISTRATION] Panel registrasi diperbarui di #${channel.name} (id: ${updatedPanel.id}).`
     );
@@ -426,7 +447,7 @@ export async function handlePlatformSelect(interaction) {
   const platform = interaction.values?.[0];
   if (!["youtube", "tiktok"].includes(platform)) {
     await interaction.reply({
-      content: "Pilihan platform tidak valid.",
+      content: "Pilihan platform nggak valid.",
       flags: MessageFlags.Ephemeral,
     });
     await registerActiveEphemeral(interaction.user.id, interaction, 5000);
@@ -443,7 +464,7 @@ export async function handleOpenRegisterModal(interaction) {
   if (!platform) {
     await interaction.reply({
       content:
-        "Pilih platform (**YouTube** atau **TikTok**) terlebih dahulu pada menu **Select Platform**.",
+        "Pilih platform (**YouTube** atau **TikTok**) dulu di menu **Select Platform**.",
       flags: MessageFlags.Ephemeral,
     });
     await registerActiveEphemeral(interaction.user.id, interaction, 5000);
@@ -479,7 +500,7 @@ export async function handleRegisterModalSubmit(interaction, platform) {
 
   if (!["youtube", "tiktok"].includes(platform)) {
     await interaction.editReply({
-      content: "Platform tidak valid. Silakan ulangi dari panel registrasi.",
+      content: "Platform nggak valid, silakan coba lagi dari panel.",
     });
     scheduleEphemeralAutoDelete(interaction.user.id, interaction, 6000);
     return;
@@ -496,7 +517,7 @@ export async function handleRegisterModalSubmit(interaction, platform) {
 
   if (duplicate) {
     await interaction.editReply({
-      content: `Akun ${formatPlatformName(platform)} \`${resolved.username}\` sudah terdaftar.`,
+      content: `Akun ${formatPlatformName(platform)} \`${resolved.username}\` udah terdaftar.`,
     });
     scheduleEphemeralAutoDelete(interaction.user.id, interaction, 6000);
     return;
@@ -512,7 +533,7 @@ export async function handleRegisterModalSubmit(interaction, platform) {
     .setColor(EMBED_COLOR)
     .setTitle("CONFIRM STREAM ACCOUNT")
     .setDescription(
-      "Pastikan detail akun streaming berikut sudah sesuai sebelum disimpan."
+      "Cek lagi detail akun di bawah sebelum disimpan."
     )
     .addFields(
       {
@@ -555,7 +576,7 @@ export async function handleConfirmRegistration(interaction, confirmed) {
   if (!confirmed) {
     clearUserRegistrationState(interaction.user.id);
     await interaction.editReply({
-      content: "Registrasi akun dibatalkan.",
+      content: "Pendaftaran akun dibatalkan.",
       embeds: [],
       components: [],
     });
@@ -574,7 +595,7 @@ export async function handleConfirmRegistration(interaction, confirmed) {
     clearUserRegistrationState(interaction.user.id);
     await interaction.editReply({
       content:
-        "Sesi konfirmasi telah kedaluwarsa. Silakan ulangi dari panel registrasi.",
+        "Sesi konfirmasi udah habis, silakan ulangi dari panel.",
       embeds: [],
       components: [],
     });
@@ -593,7 +614,7 @@ export async function handleConfirmRegistration(interaction, confirmed) {
   if (duplicate) {
     clearUserRegistrationState(interaction.user.id);
     await interaction.editReply({
-      content: `Akun ${formatPlatformName(pending.platform)} \`${pending.username}\` sudah terdaftar.`,
+      content: `Akun ${formatPlatformName(pending.platform)} \`${pending.username}\` udah terdaftar.`,
       embeds: [],
       components: [],
     });
@@ -633,7 +654,7 @@ export async function handleConfirmRegistration(interaction, confirmed) {
     .setColor(SUCCESS_COLOR)
     .setTitle("ACCOUNT REGISTERED")
     .setDescription(
-      "Akun streaming berhasil ditambahkan ke sistem monitoring otomatis."
+      "Akun berhasil didaftarkan. Notifikasi bakal otomatis dikirim waktu kamu mulai live."
     )
     .addFields(
       {
@@ -688,8 +709,8 @@ export async function buildMyAccountsPayload(
     .setTitle("MY ACCOUNTS")
     .setDescription(
       notice
-        ? `${notice}\n\nBelum ada akun streaming yang terdaftar. Pilih platform pada panel lalu tekan **Register Account**.`
-        : "Belum ada akun streaming yang terdaftar. Pilih platform pada panel lalu tekan **Register Account**."
+        ? `${notice}\n\nBelum ada akun yang terdaftar. Pilih platform di panel lalu klik **Register Account**.`
+        : "Belum ada akun yang terdaftar. Pilih platform di panel lalu klik **Register Account**."
     );
 
   const closeOnlyRow = new ActionRowBuilder().addComponents(
@@ -739,7 +760,7 @@ export async function buildMyAccountsPayload(
     accounts.find((a) => a.id === selectedAccountId) || accounts[0];
 
   const baseDesc =
-    "Kelola akun streaming yang terdaftar pada profil Discord kamu.";
+    "Daftar akun streaming yang terhubung ke Discord kamu.";
   const description = notice ? `*${notice}*\n\n${baseDesc}` : baseDesc;
 
   const embed = new EmbedBuilder()
@@ -1028,7 +1049,7 @@ export async function handleDeleteAccountSelect(
     .setColor(DANGER_COLOR)
     .setTitle("REMOVE ACCOUNT")
     .setDescription(
-      "Apakah kamu yakin ingin menghapus akun berikut dari sistem monitoring?"
+      "Yakin mau hapus akun ini dari daftar notifikasi live?"
     )
     .addFields(
       {
