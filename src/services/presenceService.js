@@ -183,10 +183,13 @@ function startPresenceRotation(client) {
       await fetchStreamerStats();
     }
   }, intervalMs);
+  rotationTimer.unref?.();
 }
 
 export async function updateMemberPresence(client, { forceFetch = false } = {}) {
-  await fetchStreamerStats();
+  if (forceFetch || cachedStreamerStats.totalStreamers === 0) {
+    await fetchStreamerStats();
+  }
 
   const hasMembersIntent = client.options.intents.has(
     GatewayIntentBits.GuildMembers
