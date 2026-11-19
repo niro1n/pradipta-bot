@@ -1,6 +1,9 @@
 const REQUEST_TIMEOUT_MS = 8000;
 const MIN_CHECK_INTERVAL_MS = 10 * 1000;
+const CONTENT_CHECK_INTERVAL_MS = 45 * 1000;
 const lastCheckedMap = new Map();
+const lastContentCheckedMap = new Map();
+const seenTikTokContentIds = new Set();
 
 const BASE_HEADERS = {
   "User-Agent":
@@ -382,6 +385,140 @@ export async function checkTikTokAccountsLive(accounts = [], { force = false } =
       const res = await checkTikTokAccountLive(account);
       lastCheckedMap.set(account.id, Date.now());
       results.set(account.id, res);
+    })
+  );
+
+  return results;
+}
+
+function decodeTikTokVideoTimestampMs(videoId) {
+  try {
+    if (!/^\d{15,22}$/.test(String(videoId))) return 0;
+    const sec = Number(BigInt(videoId) >> 32n);
+    if (!Number.isFinite(sec) || sec <= 1500000000) return 0;
+    return sec * 1000;
+  } catch {
+    return 0;
+  }
+}
+
+export async function checkTikTokAccountContent(
+  account,
+  { sinceTimestampMs = Date.now() } = {}
+) {
+  const cleanUsername = String(account.username || "")
+    .replace(/^@/, "")
+    .trim()
+    .toLowerCase();
+
+  if (!cleanUsername) return [];
+
+  const embedUrl = `https://www.tiktok.com/embed/@${encodeURIComponent(cleanUsername)}?_=${Date.now()}`;
+
+  try {
+    const response = await fetch(embedUrl, {
+      headers: PUBLIC_HTML_HEADERS,
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+
+    if (!response.ok) return [];
+
+    const html = await response.text();
+    const stateMatch = html.match(
+      /<script\s+id="__FRONTITY_CONNECT_STATE__"[^>]*>([\s\S]*?)<\/script>/i
+    );
+    if (!stateMatch?.[1]) return [];
+
+    const parsedState = JSON.parse(stateMatch[1]);
+    const sourceData = parsedState?.source?.data || {};
+    const routeData =
+      sourceData[`/embed/@${cleanUsername}`] ||
+      Object.values(sourceData).find((entry) => Array.isArray(entry?.videoList));
+
+    const videoList = Array.isArray(routeData?.videoList)
+      ? routeData.videoList
+      : [];
+    if (videoList.length === 0) return [];
+
+    const accountCreatedMs = account.created_at
+      ? Date.parse(account.created_at)
+      : 0;
+    const cutoffMs = Math.max(sinceTimestampMs, accountCreatedMs || 0);
+
+    const newPosts = [];
+
+    for (const item of videoList) {
+      const videoId = String(item?.id || "").trim();
+      if (!videoId || seenTikTokContentIds.has(videoId)) continue;
+
+      const publishedMs = decodeTikTokVideoTimestampMs(videoId);
+      if (!publishedMs || publishedMs < cutoffMs) {
+        seenTikTokContentIds.add(videoId);
+        continue;
+      }
+
+      seenTikTokContentIds.add(videoId);
+
+      const rawDesc = String(item?.desc || "").trim();
+      const title = (
+        rawDesc || `${account.username} UPLOAD VIDEO BARU DI TIKTOK`
+      )
+        .slice(0, 240)
+        .toUpperCase();
+
+      newPosts.push({
+        contentId: videoId,
+        title,
+        contentUrl: `https://www.tiktok.com/@${cleanUsername}/video/${videoId}`,
+        thumbnailUrl: item?.originCoverUrl || item?.coverUrl || null,
+        publishedAt: new Date(publishedMs).toISOString(),
+      });
+    }
+
+    return newPosts.sort(
+      (a, b) => Date.parse(a.publishedAt) - Date.parse(b.publishedAt)
+    );
+  } catch {
+    return [];
+  }
+}
+
+export async function checkTikTokAccountsContent(
+  accounts = [],
+  { sinceTimestampMs = Date.now(), force = false } = {}
+) {
+  const results = new Map();
+  const now = Date.now();
+
+  const eligibleAccounts = accounts.filter((acc) => {
+    if (acc.platform !== "tiktok" || acc.is_active === false) {
+      return false;
+    }
+    if (force) return true;
+    const lastCheck = lastContentCheckedMap.get(acc.id) || 0;
+    return now - lastCheck >= CONTENT_CHECK_INTERVAL_MS;
+  });
+
+  if (eligibleAccounts.length === 0) {
+    return results;
+  }
+
+  if (lastContentCheckedMap.size > 500) {
+    lastContentCheckedMap.clear();
+  }
+  if (seenTikTokContentIds.size > 1000) {
+    seenTikTokContentIds.clear();
+  }
+
+  await Promise.all(
+    eligibleAccounts.map(async (account) => {
+      const posts = await checkTikTokAccountContent(account, {
+        sinceTimestampMs,
+      });
+      lastContentCheckedMap.set(account.id, Date.now());
+      if (posts.length > 0) {
+        results.set(account.id, posts);
+      }
     })
   );
 
