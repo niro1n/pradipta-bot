@@ -230,7 +230,7 @@ export function buildRegistrationPanelPayload(accounts = []) {
     .setColor(EMBED_COLOR)
     .setTitle(PANEL_TITLE)
     .setDescription(
-      "Daftarkan akun YouTube atau TikTok kamu biar notifikasi live otomatis dikirim ke server waktu kamu mulai live."
+      "Daftarkan akun YouTube atau TikTok kamu cukup satu kali biar notifikasi live dan konten baru otomatis dikirim ke server."
     )
     .addFields(
       {
