@@ -9,7 +9,10 @@ let quotaCooldownUntil = 0;
 let totalQuotaUnitsUsed = 0;
 let totalApiRequests = 0;
 const lastCheckedMap = new Map();
+const lastContentCheckedMap = new Map();
 const finishedVideoIds = new Set();
+const seenContentVideoIds = new Set();
+const CONTENT_CHECK_INTERVAL_MS = 45 * 1000;
 
 function sanitizeErrorMessage(message) {
   const apiKey = config.youtube.apiKey;
@@ -290,10 +293,10 @@ async function discoverLiveVideoIdFromCanonical(channelId) {
   }
 }
 
-async function discoverVideoIdsFromPublicFeed(channelId) {
+async function fetchPublicFeedEntries(channelId) {
   try {
     const response = await fetch(
-      `https://www.youtube.com/feeds/videos.xml?channel_id=${encodeURIComponent(channelId)}`,
+      `https://www.youtube.com/feeds/videos.xml?channel_id=${encodeURIComponent(channelId)}&_=${Date.now()}`,
       {
         headers: {
           "User-Agent":
@@ -309,11 +312,40 @@ async function discoverVideoIdsFromPublicFeed(channelId) {
     if (!response.ok) return [];
 
     const xml = await response.text();
-    const matches = [...xml.matchAll(/<yt:videoId>([\w-]{11})<\/yt:videoId>/g)];
-    return matches.slice(0, 5).map((m) => m[1]);
+    const entryBlocks = [...xml.matchAll(/<entry>([\s\S]*?)<\/entry>/g)].map(
+      (m) => m[1]
+    );
+
+    const entries = [];
+    for (const block of entryBlocks.slice(0, 8)) {
+      const videoId = block.match(/<yt:videoId>([\w-]{11})<\/yt:videoId>/)?.[1];
+      if (!videoId) continue;
+
+      const title =
+        block
+          .match(/<title>([\s\S]*?)<\/title>/)?.[1]
+          ?.replaceAll("&amp;", "&")
+          ?.replaceAll("&quot;", '"')
+          ?.replaceAll("&#39;", "'")
+          ?.replaceAll("&lt;", "<")
+          ?.replaceAll("&gt;", ">") || "";
+      const published = block.match(/<published>([\s\S]*?)<\/published>/)?.[1] || null;
+      const link =
+        block.match(/<link\s+rel="alternate"\s+href="([^"]+)"/i)?.[1] ||
+        `https://www.youtube.com/watch?v=${videoId}`;
+
+      entries.push({ videoId, title, published, link });
+    }
+
+    return entries;
   } catch {
     return [];
   }
+}
+
+async function discoverVideoIdsFromPublicFeed(channelId) {
+  const entries = await fetchPublicFeedEntries(channelId);
+  return entries.slice(0, 5).map((e) => e.videoId);
 }
 
 async function fetchRecentCandidateVideoIds(channelId) {
@@ -487,6 +519,125 @@ export async function checkYouTubeAccountsLive(accounts = [], { force = false } 
         isLive: false,
         available: true,
       });
+    }
+  }
+
+  return results;
+}
+
+export async function checkYouTubeAccountsContent(
+  accounts = [],
+  { sinceTimestampMs = Date.now(), force = false } = {}
+) {
+  const results = new Map();
+
+  if (!config.youtube.apiKey || Date.now() < quotaCooldownUntil) {
+    return results;
+  }
+
+  const now = Date.now();
+  const eligibleAccounts = accounts.filter((acc) => {
+    if (acc.platform !== "youtube" || !acc.platform_user_id || acc.is_active === false) {
+      return false;
+    }
+    if (force) return true;
+    const lastCheck = lastContentCheckedMap.get(acc.id) || 0;
+    return now - lastCheck >= CONTENT_CHECK_INTERVAL_MS;
+  });
+
+  if (eligibleAccounts.length === 0) {
+    return results;
+  }
+
+  if (lastContentCheckedMap.size > 500) {
+    lastContentCheckedMap.clear();
+  }
+  if (seenContentVideoIds.size > 1000) {
+    seenContentVideoIds.clear();
+  }
+
+  const candidateByVideoId = new Map();
+
+  await Promise.all(
+    eligibleAccounts.map(async (account) => {
+      const entries = await fetchPublicFeedEntries(account.platform_user_id);
+      lastContentCheckedMap.set(account.id, Date.now());
+
+      const accountCreatedMs = account.created_at
+        ? Date.parse(account.created_at)
+        : 0;
+      const cutoffMs = Math.max(sinceTimestampMs, accountCreatedMs || 0);
+
+      for (const entry of entries) {
+        if (seenContentVideoIds.has(entry.videoId)) continue;
+
+        const publishedMs = entry.published ? Date.parse(entry.published) : 0;
+        if (!publishedMs || publishedMs < cutoffMs) {
+          seenContentVideoIds.add(entry.videoId);
+          continue;
+        }
+
+        candidateByVideoId.set(entry.videoId, { account, entry });
+      }
+    })
+  );
+
+  const videoIdArray = Array.from(candidateByVideoId.keys());
+  if (videoIdArray.length === 0) {
+    return results;
+  }
+
+  for (let i = 0; i < videoIdArray.length; i += 50) {
+    const batchIds = videoIdArray.slice(i, i + 50);
+    try {
+      const videosData = await callYouTubeApi(
+        "videos",
+        {
+          part: "id,snippet,liveStreamingDetails",
+          id: batchIds.join(","),
+        },
+        1
+      );
+
+      for (const video of videosData?.items || []) {
+        seenContentVideoIds.add(video.id);
+
+        const isLiveOrStream =
+          Boolean(video.liveStreamingDetails) ||
+          (video.snippet?.liveBroadcastContent &&
+            video.snippet.liveBroadcastContent !== "none");
+
+        if (isLiveOrStream) {
+          continue;
+        }
+
+        const candidate = candidateByVideoId.get(video.id);
+        if (!candidate) continue;
+
+        const { account, entry } = candidate;
+        const list = results.get(account.id) || [];
+        list.push({
+          contentId: video.id,
+          title: String(
+            video.snippet?.title || entry.title || `${account.username} NEW VIDEO`
+          ).toUpperCase(),
+          contentUrl: entry.link || `https://www.youtube.com/watch?v=${video.id}`,
+          thumbnailUrl:
+            video.snippet?.thumbnails?.maxres?.url ||
+            video.snippet?.thumbnails?.high?.url ||
+            video.snippet?.thumbnails?.medium?.url ||
+            `https://i.ytimg.com/vi/${video.id}/hqdefault.jpg`,
+          publishedAt:
+            video.snippet?.publishedAt ||
+            entry.published ||
+            new Date().toISOString(),
+        });
+        results.set(account.id, list);
+      }
+    } catch (error) {
+      console.error(
+        `[YouTube Content] Gagal memverifikasi batch konten: ${error.message}`
+      );
     }
   }
 
