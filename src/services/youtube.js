@@ -12,7 +12,10 @@ const lastCheckedMap = new Map();
 const lastContentCheckedMap = new Map();
 const finishedVideoIds = new Set();
 const seenContentVideoIds = new Set();
+const baselinedYouTubeAccounts = new Set();
 const CONTENT_CHECK_INTERVAL_MS = 45 * 1000;
+const MAX_POST_AGE_AFTER_BASELINE_MS = 24 * 60 * 60 * 1000;
+const INITIAL_BASELINE_RECENT_WINDOW_MS = 15 * 60 * 1000;
 
 function sanitizeErrorMessage(message) {
   const apiKey = config.youtube.apiKey;
@@ -563,10 +566,18 @@ export async function checkYouTubeAccountsContent(
       const entries = await fetchPublicFeedEntries(account.platform_user_id);
       lastContentCheckedMap.set(account.id, Date.now());
 
+      const nowMs = Date.now();
       const accountCreatedMs = account.created_at
         ? Date.parse(account.created_at)
         : 0;
-      const cutoffMs = Math.max(sinceTimestampMs, accountCreatedMs || 0);
+      const isBaselined = baselinedYouTubeAccounts.has(account.id);
+      const cutoffMs = isBaselined
+        ? Math.max(nowMs - MAX_POST_AGE_AFTER_BASELINE_MS, accountCreatedMs || 0)
+        : Math.max(
+            sinceTimestampMs,
+            nowMs - INITIAL_BASELINE_RECENT_WINDOW_MS,
+            accountCreatedMs || 0
+          );
 
       for (const entry of entries) {
         if (seenContentVideoIds.has(entry.videoId)) continue;
@@ -578,6 +589,10 @@ export async function checkYouTubeAccountsContent(
         }
 
         candidateByVideoId.set(entry.videoId, { account, entry });
+      }
+
+      if (entries.length > 0) {
+        baselinedYouTubeAccounts.add(account.id);
       }
     })
   );
