@@ -189,41 +189,15 @@ async function fetchRegisteredStreamers() {
   return accounts;
 }
 
-function formatStreamerListField(accounts) {
-  if (!accounts || accounts.length === 0) {
-    return "Belum ada akun terdaftar.";
-  }
-
-  const lines = [];
-  let currentLength = 0;
-
-  for (let i = 0; i < accounts.length; i += 1) {
-    const acc = accounts[i];
-    const discordId = acc.family_members?.discord_user_id;
-    const ownerTag = discordId
-      ? `<@${discordId}>`
-      : acc.family_members?.discord_username || acc.username;
-    const liveBadge = acc.is_live ? " `LIVE`" : "";
-    const line = `${i + 1}. ${ownerTag} · [${acc.username}](${acc.profile_url})${liveBadge}`;
-
-    if (currentLength + line.length + 35 > 1000) {
-      const remaining = accounts.length - i;
-      lines.push(`*+${remaining} lainnya*`);
-      break;
-    }
-
-    lines.push(line);
-    currentLength += line.length + 1;
-  }
-
-  return lines.join("\n");
-}
+const STREAMERS_PAGE_SIZE = 15;
 
 export function buildRegistrationPanelPayload(accounts = []) {
   const youtubeAccounts = accounts.filter((a) => a.platform === "youtube");
   const tiktokAccounts = accounts.filter((a) => a.platform === "tiktok");
   const uniqueMemberIds = new Set(
-    accounts.map((a) => a.member_id || a.family_members?.discord_user_id).filter(Boolean)
+    accounts
+      .map((a) => a.member_id || a.family_members?.discord_user_id)
+      .filter(Boolean)
   );
 
   const embed = new EmbedBuilder()
@@ -239,23 +213,13 @@ export function buildRegistrationPanelPayload(accounts = []) {
         inline: true,
       },
       {
-        name: "GUIDE",
-        value: "Pilih Platform → Register",
+        name: "YOUTUBE",
+        value: `${youtubeAccounts.length} Channel`,
         inline: true,
       },
       {
-        name: "OWNERSHIP",
-        value: "Hanya Pemilik Akun",
-        inline: true,
-      },
-      {
-        name: `YOUTUBE STREAMERS (${youtubeAccounts.length})`,
-        value: formatStreamerListField(youtubeAccounts),
-        inline: true,
-      },
-      {
-        name: `TIKTOK STREAMERS (${tiktokAccounts.length})`,
-        value: formatStreamerListField(tiktokAccounts),
+        name: "TIKTOK",
+        value: `${tiktokAccounts.length} Akun`,
         inline: true,
       }
     );
@@ -284,6 +248,10 @@ export function buildRegistrationPanelPayload(accounts = []) {
     new ButtonBuilder()
       .setCustomId("reg_my_accounts")
       .setLabel("My Accounts")
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId("reg_view_streamers")
+      .setLabel("Streamers")
       .setStyle(ButtonStyle.Secondary)
   );
 
@@ -294,6 +262,130 @@ export function buildRegistrationPanelPayload(accounts = []) {
       parse: [],
     },
   };
+}
+
+export async function handleViewStreamers(
+  interaction,
+  { platformFilter = "all", page = 0, inlineUpdate = false } = {}
+) {
+  if (inlineUpdate) {
+    await interaction.deferUpdate();
+  } else {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await registerActiveEphemeral(interaction.user.id, interaction);
+  }
+
+  const allAccounts = await fetchRegisteredStreamers();
+  const youtubeAccounts = allAccounts.filter((a) => a.platform === "youtube");
+  const tiktokAccounts = allAccounts.filter((a) => a.platform === "tiktok");
+
+  const activeFilter = ["all", "youtube", "tiktok"].includes(platformFilter)
+    ? platformFilter
+    : "all";
+
+  const filtered =
+    activeFilter === "youtube"
+      ? youtubeAccounts
+      : activeFilter === "tiktok"
+        ? tiktokAccounts
+        : allAccounts;
+
+  const totalPages = Math.max(
+    1,
+    Math.ceil(filtered.length / STREAMERS_PAGE_SIZE)
+  );
+  const safePage = Math.min(Math.max(0, Number(page) || 0), totalPages - 1);
+  const startIdx = safePage * STREAMERS_PAGE_SIZE;
+  const pageItems = filtered.slice(startIdx, startIdx + STREAMERS_PAGE_SIZE);
+
+  const lines =
+    pageItems.length === 0
+      ? ["Belum ada streamer terdaftar."]
+      : pageItems.map((acc, i) => {
+          const num = startIdx + i + 1;
+          const discordId = acc.family_members?.discord_user_id;
+          const ownerTag = discordId
+            ? `<@${discordId}>`
+            : acc.family_members?.discord_username || acc.username;
+          const platformBadge =
+            activeFilter === "all"
+              ? ` · \`${formatPlatformName(acc.platform)}\``
+              : "";
+          const liveBadge = acc.is_live ? " · `LIVE`" : "";
+          return `${num}. ${ownerTag} · [${acc.username}](${acc.profile_url})${platformBadge}${liveBadge}`;
+        });
+
+  const titleSuffix =
+    activeFilter === "youtube"
+      ? ` — YOUTUBE (${youtubeAccounts.length})`
+      : activeFilter === "tiktok"
+        ? ` — TIKTOK (${tiktokAccounts.length})`
+        : ` (${allAccounts.length} AKUN)`;
+
+  const embed = new EmbedBuilder()
+    .setColor(EMBED_COLOR)
+    .setTitle(`REGISTERED STREAMERS${titleSuffix}`)
+    .setDescription(lines.join("\n"));
+
+  if (totalPages > 1) {
+    embed.setFooter({
+      text: `HALAMAN ${safePage + 1} DARI ${totalPages}`,
+    });
+  }
+
+  const filterRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId("reg_streamers_tab:all:0")
+      .setLabel(`All (${allAccounts.length})`)
+      .setStyle(
+        activeFilter === "all" ? ButtonStyle.Primary : ButtonStyle.Secondary
+      ),
+    new ButtonBuilder()
+      .setCustomId("reg_streamers_tab:youtube:0")
+      .setLabel(`YouTube (${youtubeAccounts.length})`)
+      .setStyle(
+        activeFilter === "youtube" ? ButtonStyle.Primary : ButtonStyle.Secondary
+      ),
+    new ButtonBuilder()
+      .setCustomId("reg_streamers_tab:tiktok:0")
+      .setLabel(`TikTok (${tiktokAccounts.length})`)
+      .setStyle(
+        activeFilter === "tiktok" ? ButtonStyle.Primary : ButtonStyle.Secondary
+      ),
+    new ButtonBuilder()
+      .setCustomId("reg_close_ephemeral")
+      .setLabel("Close")
+      .setStyle(ButtonStyle.Secondary)
+  );
+
+  const components = [filterRow];
+
+  if (totalPages > 1) {
+    const pageRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`reg_streamers_tab:${activeFilter}:${safePage - 1}`)
+        .setLabel("Prev")
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(safePage <= 0),
+      new ButtonBuilder()
+        .setCustomId(`reg_streamers_tab:${activeFilter}:${safePage + 1}`)
+        .setLabel("Next")
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(safePage >= totalPages - 1)
+    );
+    components.push(pageRow);
+  }
+
+  await interaction.editReply({
+    content: null,
+    embeds: [embed],
+    components,
+    allowedMentions: {
+      parse: [],
+    },
+  });
+
+  scheduleEphemeralAutoDelete(interaction.user.id, interaction, 60000);
 }
 
 async function performRegistrationPanelSync(client) {
