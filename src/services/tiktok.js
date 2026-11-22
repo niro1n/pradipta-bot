@@ -1,9 +1,12 @@
 const REQUEST_TIMEOUT_MS = 8000;
-const MIN_CHECK_INTERVAL_MS = 10 * 1000;
-const CONTENT_CHECK_INTERVAL_MS = 45 * 1000;
+const MIN_CHECK_INTERVAL_MS = 20 * 1000;
+const CONTENT_CHECK_INTERVAL_MS = 60 * 1000;
 const MAX_POST_AGE_AFTER_BASELINE_MS = 24 * 60 * 60 * 1000;
 const INITIAL_BASELINE_RECENT_WINDOW_MS = 15 * 60 * 1000;
-const CONCURRENCY_LIMIT = 4;
+const LIVE_BATCH_SIZE_PER_TICK = 5;
+const CONTENT_BATCH_SIZE_PER_TICK = 3;
+const CONCURRENCY_LIMIT = 2;
+const REQUEST_STAGGER_MS = 150;
 
 const lastCheckedMap = new Map();
 const lastContentCheckedMap = new Map();
@@ -32,6 +35,22 @@ const PUBLIC_API_HEADERS = {
 
 const NOT_FOUND_CODES = new Set([10202, 10221, 10222]);
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function safeParseJsonResponse(response) {
+  const text = await response.text();
+  if (!text || !text.trim()) {
+    return null;
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
 async function runWithConcurrency(items, limit, worker) {
   const queue = [...items];
   const runners = Array.from(
@@ -41,6 +60,9 @@ async function runWithConcurrency(items, limit, worker) {
         const item = queue.shift();
         if (item !== undefined) {
           await worker(item);
+          if (queue.length > 0 && REQUEST_STAGGER_MS > 0) {
+            await sleep(REQUEST_STAGGER_MS);
+          }
         }
       }
     }
@@ -126,7 +148,11 @@ async function fetchTikTokLiveRoomApi(cleanUsername) {
     return { ok: false, status: response.status };
   }
 
-  const payload = await response.json();
+  const payload = await safeParseJsonResponse(response);
+  if (!payload) {
+    return { ok: false, status: 204 };
+  }
+
   const user = payload?.data?.user || null;
 
   if (user?.secUid) {
@@ -401,14 +427,20 @@ export async function checkTikTokAccountsLive(accounts = [], { force = false } =
   const results = new Map();
   const now = Date.now();
 
-  const eligibleAccounts = accounts.filter((acc) => {
-    if (acc.platform !== "tiktok" || acc.is_active === false) {
-      return false;
-    }
-    if (force) return true;
-    const lastCheck = lastCheckedMap.get(acc.id) || 0;
-    return now - lastCheck >= MIN_CHECK_INTERVAL_MS;
-  });
+  const eligibleAccounts = accounts
+    .filter((acc) => {
+      if (acc.platform !== "tiktok" || acc.is_active === false) {
+        return false;
+      }
+      if (force) return true;
+      const lastCheck = lastCheckedMap.get(acc.id) || 0;
+      return now - lastCheck >= MIN_CHECK_INTERVAL_MS;
+    })
+    .sort(
+      (a, b) =>
+        (lastCheckedMap.get(a.id) || 0) - (lastCheckedMap.get(b.id) || 0)
+    )
+    .slice(0, force ? accounts.length : LIVE_BATCH_SIZE_PER_TICK);
 
   if (lastCheckedMap.size > 500) {
     lastCheckedMap.clear();
@@ -447,7 +479,7 @@ async function fetchTikTokCreatorItemsBySecUid(secUid, cleanUsername) {
 
   if (!response.ok) return null;
 
-  const data = await response.json();
+  const data = await safeParseJsonResponse(response);
   if (!Array.isArray(data?.itemList)) return null;
 
   return data.itemList
@@ -603,14 +635,21 @@ export async function checkTikTokAccountsContent(
   const results = new Map();
   const now = Date.now();
 
-  const eligibleAccounts = accounts.filter((acc) => {
-    if (acc.platform !== "tiktok" || acc.is_active === false) {
-      return false;
-    }
-    if (force) return true;
-    const lastCheck = lastContentCheckedMap.get(acc.id) || 0;
-    return now - lastCheck >= CONTENT_CHECK_INTERVAL_MS;
-  });
+  const eligibleAccounts = accounts
+    .filter((acc) => {
+      if (acc.platform !== "tiktok" || acc.is_active === false) {
+        return false;
+      }
+      if (force) return true;
+      const lastCheck = lastContentCheckedMap.get(acc.id) || 0;
+      return now - lastCheck >= CONTENT_CHECK_INTERVAL_MS;
+    })
+    .sort(
+      (a, b) =>
+        (lastContentCheckedMap.get(a.id) || 0) -
+        (lastContentCheckedMap.get(b.id) || 0)
+    )
+    .slice(0, force ? accounts.length : CONTENT_BATCH_SIZE_PER_TICK);
 
   if (eligibleAccounts.length === 0) {
     return results;
