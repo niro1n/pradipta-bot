@@ -12,6 +12,7 @@ import {
   handleOpenRegisterModal,
   handlePlatformSelect,
   handleRegisterModalSubmit,
+  handleViewStreamers,
   registerActiveEphemeral,
   scheduleEphemeralAutoDelete,
 } from "../services/registration.js";
@@ -74,6 +75,23 @@ export default {
           await handleMyAccounts(interaction, { inlineUpdate: true });
           return;
         }
+        if (interaction.customId === "reg_view_streamers") {
+          await handleViewStreamers(interaction, {
+            platformFilter: "all",
+            page: 0,
+            inlineUpdate: false,
+          });
+          return;
+        }
+        if (interaction.customId.startsWith("reg_streamers_tab:")) {
+          const [, platformFilter, pageStr] = interaction.customId.split(":");
+          await handleViewStreamers(interaction, {
+            platformFilter,
+            page: Number(pageStr) || 0,
+            inlineUpdate: true,
+          });
+          return;
+        }
         if (interaction.customId === "reg_close_ephemeral") {
           await handleCloseEphemeral(interaction);
           return;
@@ -134,13 +152,16 @@ export default {
         console.warn(
           `[INTERACTION] Unhandled customId: ${interaction.customId}`
         );
-        await interaction.reply({
-          content: "Interaksi ini sudah tidak berlaku.",
-          flags: MessageFlags.Ephemeral,
-        });
-        await registerActiveEphemeral(interaction.user.id, interaction, 4000);
       }
     } catch (error) {
+      if (
+        error?.code === 40060 ||
+        error?.code === 10062 ||
+        String(error?.message || "").includes("already been acknowledged")
+      ) {
+        return;
+      }
+
       const elapsed = Date.now() - startTime;
       const safeMessage = sanitizeUserErrorMessage(error?.message);
       console.error(
