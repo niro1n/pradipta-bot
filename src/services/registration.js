@@ -336,19 +336,19 @@ export async function handleViewStreamers(
 
   const filterRow = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
-      .setCustomId("reg_streamers_tab:all:0")
+      .setCustomId("reg_streamers_tab:all:0:tab")
       .setLabel(`All (${allAccounts.length})`)
       .setStyle(
         activeFilter === "all" ? ButtonStyle.Primary : ButtonStyle.Secondary
       ),
     new ButtonBuilder()
-      .setCustomId("reg_streamers_tab:youtube:0")
+      .setCustomId("reg_streamers_tab:youtube:0:tab")
       .setLabel(`YouTube (${youtubeAccounts.length})`)
       .setStyle(
         activeFilter === "youtube" ? ButtonStyle.Primary : ButtonStyle.Secondary
       ),
     new ButtonBuilder()
-      .setCustomId("reg_streamers_tab:tiktok:0")
+      .setCustomId("reg_streamers_tab:tiktok:0:tab")
       .setLabel(`TikTok (${tiktokAccounts.length})`)
       .setStyle(
         activeFilter === "tiktok" ? ButtonStyle.Primary : ButtonStyle.Secondary
@@ -364,12 +364,12 @@ export async function handleViewStreamers(
   if (totalPages > 1) {
     const pageRow = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
-        .setCustomId(`reg_streamers_tab:${activeFilter}:${safePage - 1}`)
+        .setCustomId(`reg_streamers_tab:${activeFilter}:${safePage - 1}:prev`)
         .setLabel("Prev")
         .setStyle(ButtonStyle.Secondary)
         .setDisabled(safePage <= 0),
       new ButtonBuilder()
-        .setCustomId(`reg_streamers_tab:${activeFilter}:${safePage + 1}`)
+        .setCustomId(`reg_streamers_tab:${activeFilter}:${safePage + 1}:next`)
         .setLabel("Next")
         .setStyle(ButtonStyle.Secondary)
         .setDisabled(safePage >= totalPages - 1)
