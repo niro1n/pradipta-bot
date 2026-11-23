@@ -66,7 +66,23 @@ CREATE INDEX IF NOT EXISTS idx_notification_logs_account_id
 CREATE UNIQUE INDEX IF NOT EXISTS uq_notification_logs_account_stream_channel
   ON public.notification_logs (account_id, stream_id, channel_id);
 
+CREATE TABLE IF NOT EXISTS public.system_logs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  level TEXT NOT NULL CHECK (level IN ('info', 'warn', 'error')),
+  category TEXT NOT NULL,
+  message TEXT NOT NULL,
+  metadata JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_system_logs_created_at
+  ON public.system_logs (created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_system_logs_level_category
+  ON public.system_logs (level, category);
+
 ALTER TABLE public.family_members ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.stream_accounts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.live_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.notification_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.system_logs ENABLE ROW LEVEL SECURITY;
