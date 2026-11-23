@@ -6,6 +6,7 @@ import {
 } from "discord.js";
 import config from "../config/config.js";
 import supabase from "./database.js";
+import logger from "./logger.js";
 import {
   checkYouTubeAccountsContent,
   checkYouTubeAccountsLive,
@@ -32,8 +33,9 @@ function getPlatformColor(platform) {
 export async function sendLiveNotification(client, { account, member, liveInfo }) {
   const channelId = config.channels.notificationChannelId;
   if (!channelId) {
-    console.warn(
-      "[NOTIFICATION] NOTIFICATION_CHANNEL_ID belum dikonfigurasi, melewati pengiriman notifikasi."
+    logger.warn(
+      "NOTIFICATION",
+      "NOTIFICATION_CHANNEL_ID belum dikonfigurasi, melewati pengiriman notifikasi."
     );
     return { sent: false, reason: "missing_channel_id" };
   }
@@ -52,8 +54,10 @@ export async function sendLiveNotification(client, { account, member, liveInfo }
     .maybeSingle();
 
   if (checkError) {
-    console.error(
-      `[NOTIFICATION] Gagal memeriksa notification_logs: ${checkError.message}`
+    logger.error(
+      "NOTIFICATION",
+      `Gagal memeriksa notification_logs: ${checkError.message}`,
+      { accountId: account.id, streamId: liveInfo.streamId }
     );
   }
 
@@ -67,8 +71,10 @@ export async function sendLiveNotification(client, { account, member, liveInfo }
     (await client.channels.fetch(channelId).catch(() => null));
 
   if (!channel || !channel.isTextBased()) {
-    console.error(
-      `[NOTIFICATION] Channel notifikasi (${channelId}) tidak ditemukan atau bukan text channel.`
+    logger.error(
+      "NOTIFICATION",
+      `Channel notifikasi (${channelId}) tidak ditemukan atau bukan text channel.`,
+      { channelId }
     );
     return { sent: false, reason: "invalid_channel" };
   }
@@ -131,13 +137,24 @@ export async function sendLiveNotification(client, { account, member, liveInfo }
   });
 
   if (logError && !logError.message.includes("duplicate")) {
-    console.error(
-      `[NOTIFICATION] Gagal mencatat notification_logs: ${logError.message}`
+    logger.error(
+      "NOTIFICATION",
+      `Gagal mencatat notification_logs: ${logError.message}`,
+      { accountId: account.id, streamId: liveInfo.streamId }
     );
   }
 
-  console.log(
-    `[NOTIFICATION] Notifikasi LIVE terkirim untuk ${account.platform}:${account.username} (streamId: ${liveInfo.streamId})`
+  logger.info(
+    "NOTIFICATION",
+    `Notifikasi LIVE terkirim untuk ${account.platform}:${account.username} (streamId: ${liveInfo.streamId})`,
+    {
+      accountId: account.id,
+      platform: account.platform,
+      username: account.username,
+      streamId: liveInfo.streamId,
+      title: embedTitle,
+    },
+    { persistDb: true }
   );
 
   return { sent: true, streamId: liveInfo.streamId };
@@ -167,8 +184,10 @@ export async function sendContentNotification(
     .maybeSingle();
 
   if (checkError) {
-    console.error(
-      `[CONTENT] Gagal memeriksa notification_logs: ${checkError.message}`
+    logger.error(
+      "CONTENT",
+      `Gagal memeriksa notification_logs: ${checkError.message}`,
+      { accountId: account.id, contentId: contentInfo.contentId }
     );
   }
 
@@ -182,8 +201,10 @@ export async function sendContentNotification(
     (await client.channels.fetch(channelId).catch(() => null));
 
   if (!channel || !channel.isTextBased()) {
-    console.error(
-      `[CONTENT] Channel konten (${channelId}) tidak ditemukan atau bukan text channel.`
+    logger.error(
+      "CONTENT",
+      `Channel konten (${channelId}) tidak ditemukan atau bukan text channel.`,
+      { channelId }
     );
     return { sent: false, reason: "invalid_channel" };
   }
@@ -248,13 +269,24 @@ export async function sendContentNotification(
   });
 
   if (logError && !logError.message.includes("duplicate")) {
-    console.error(
-      `[CONTENT] Gagal mencatat notification_logs: ${logError.message}`
+    logger.error(
+      "CONTENT",
+      `Gagal mencatat notification_logs: ${logError.message}`,
+      { accountId: account.id, contentId: contentInfo.contentId }
     );
   }
 
-  console.log(
-    `[CONTENT] Notifikasi KONTEN terkirim untuk ${account.platform}:${account.username} (contentId: ${contentInfo.contentId})`
+  logger.info(
+    "CONTENT",
+    `Notifikasi KONTEN terkirim untuk ${account.platform}:${account.username} (contentId: ${contentInfo.contentId})`,
+    {
+      accountId: account.id,
+      platform: account.platform,
+      username: account.username,
+      contentId: contentInfo.contentId,
+      title: embedTitle,
+    },
+    { persistDb: true }
   );
 
   return { sent: true, contentId: contentInfo.contentId };
@@ -269,31 +301,64 @@ async function handleAccountLiveState(client, account, liveResult, nowIso) {
     })
     .eq("id", account.id);
 
-  const { data: existingSession } = await supabase
+  const { data: openSession } = await supabase
     .from("live_sessions")
-    .select("id, ended_at")
+    .select("id, stream_id, title, ended_at")
     .eq("account_id", account.id)
-    .eq("stream_id", liveResult.streamId)
+    .is("ended_at", null)
+    .order("started_at", { ascending: false })
+    .limit(1)
     .maybeSingle();
 
-  if (!existingSession) {
-    await supabase.from("live_sessions").insert({
-      account_id: account.id,
-      stream_id: liveResult.streamId,
-      title: liveResult.title || null,
-      started_at: liveResult.startedAt || nowIso,
-    });
-  } else if (existingSession.ended_at) {
-    await supabase
+  let activeStreamId = liveResult.streamId;
+
+  if (openSession?.id) {
+    activeStreamId = openSession.stream_id;
+    const isFallbackTitle =
+      !openSession.title ||
+      openSession.title.endsWith("SEDANG LIVE DI TIKTOK!") ||
+      openSession.title.endsWith("LIVE STREAM");
+
+    if (
+      isFallbackTitle &&
+      liveResult.title &&
+      !liveResult.title.endsWith("SEDANG LIVE DI TIKTOK!")
+    ) {
+      await supabase
+        .from("live_sessions")
+        .update({ title: liveResult.title })
+        .eq("id", openSession.id);
+    }
+  } else {
+    const { data: existingSession } = await supabase
       .from("live_sessions")
-      .update({ ended_at: null })
-      .eq("id", existingSession.id);
+      .select("id, ended_at")
+      .eq("account_id", account.id)
+      .eq("stream_id", liveResult.streamId)
+      .maybeSingle();
+
+    if (!existingSession) {
+      await supabase.from("live_sessions").insert({
+        account_id: account.id,
+        stream_id: liveResult.streamId,
+        title: liveResult.title || null,
+        started_at: liveResult.startedAt || nowIso,
+      });
+    } else if (existingSession.ended_at) {
+      await supabase
+        .from("live_sessions")
+        .update({ ended_at: null })
+        .eq("id", existingSession.id);
+    }
   }
 
   await sendLiveNotification(client, {
     account,
     member: account.family_members,
-    liveInfo: liveResult,
+    liveInfo: {
+      ...liveResult,
+      streamId: activeStreamId,
+    },
   });
 
   return !account.is_live;
@@ -315,8 +380,14 @@ async function handleAccountOfflineTransition(account, nowIso) {
       .is("ended_at", null),
   ]);
 
-  console.log(
-    `[MONITOR] ${account.platform.toUpperCase()} ${account.username} kini OFFLINE.`
+  logger.info(
+    "MONITOR",
+    `${account.platform.toUpperCase()} ${account.username} kini OFFLINE.`,
+    {
+      accountId: account.id,
+      platform: account.platform,
+      username: account.username,
+    }
   );
 
   return true;
@@ -335,7 +406,10 @@ export async function runLiveMonitorCycle(client, { force = false } = {}) {
       .eq("is_active", true);
 
     if (error) {
-      console.error(`[MONITOR] Gagal mengambil daftar akun: ${error.message}`);
+      logger.error(
+        "MONITOR",
+        `Gagal mengambil daftar akun: ${error.message}`
+      );
       return;
     }
 
@@ -379,8 +453,14 @@ export async function runLiveMonitorCycle(client, { force = false } = {}) {
               contentInfo,
             });
           } catch (contentErr) {
-            console.error(
-              `[CONTENT] Error saat mengirim notif konten ${account.username}: ${contentErr.message}`
+            logger.error(
+              "CONTENT",
+              `Error saat mengirim notif konten ${account.username}: ${contentErr.message}`,
+              {
+                accountId: account.id,
+                username: account.username,
+                contentId: contentInfo?.contentId,
+              }
             );
           }
         }
@@ -411,8 +491,14 @@ export async function runLiveMonitorCycle(client, { force = false } = {}) {
           }
         }
       } catch (err) {
-        console.error(
-          `[MONITOR] Error saat memproses status ${account.username}: ${err.message}`
+        logger.error(
+          "MONITOR",
+          `Error saat memproses status ${account.username}: ${err.message}`,
+          {
+            accountId: account.id,
+            platform: account.platform,
+            username: account.username,
+          }
         );
       }
     }
@@ -428,7 +514,10 @@ export async function runLiveMonitorCycle(client, { force = false } = {}) {
       ensureRegistrationPanel(client).catch(() => {});
     }
   } catch (error) {
-    console.error(`[MONITOR] Kesalahan pada siklus monitoring: ${error.message}`);
+    logger.error(
+      "MONITOR",
+      `Kesalahan pada siklus monitoring: ${error.message}`
+    );
   } finally {
     isRunningCycle = false;
   }
@@ -445,19 +534,20 @@ export function startLiveMonitor(client) {
   stopLiveMonitor();
 
   const intervalMs = config.bot.monitorIntervalMs || 15000;
-  console.log(
-    `[MONITOR] Live stream monitor aktif (interval: ${Math.round(intervalMs / 1000)}s)`
+  logger.info(
+    "MONITOR",
+    `Live stream monitor aktif (interval: ${Math.round(intervalMs / 1000)}s)`
   );
 
   setTimeout(() => {
     runLiveMonitorCycle(client).catch((err) =>
-      console.error("[MONITOR] Initial cycle error:", err.message)
+      logger.error("MONITOR", `Initial cycle error: ${err.message}`)
     );
   }, 3000).unref();
 
   monitorTimer = setInterval(() => {
     runLiveMonitorCycle(client).catch((err) =>
-      console.error("[MONITOR] Cycle error:", err.message)
+      logger.error("MONITOR", `Cycle error: ${err.message}`)
     );
   }, intervalMs);
   monitorTimer.unref?.();
