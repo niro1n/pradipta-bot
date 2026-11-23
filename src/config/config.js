@@ -33,6 +33,7 @@ export const config = {
     notificationChannelId: process.env.NOTIFICATION_CHANNEL_ID?.trim() || null,
     contentChannelId:
       process.env.CONTENT_CHANNEL_ID?.trim() || "1572840204010520687",
+    logChannelId: process.env.LOG_CHANNEL_ID?.trim() || null,
   },
   youtube: {
     apiKey: process.env.YOUTUBE_API_KEY?.trim() || null,
