@@ -1,3 +1,5 @@
+import logger from "./logger.js";
+
 const REQUEST_TIMEOUT_MS = 8000;
 const MIN_CHECK_INTERVAL_MS = 20 * 1000;
 const CONTENT_CHECK_INTERVAL_MS = 60 * 1000;
@@ -274,23 +276,36 @@ export async function resolveTikTokAccount(rawInput) {
   };
 }
 
-function buildLiveResultFromRoom({ account, liveUrl, user, liveRoom }) {
-  const roomId = user?.roomId || liveRoom?.roomId || null;
-  const status = Number(liveRoom?.status ?? user?.status ?? 0);
+function decodeTikTokVideoTimestampMs(videoId) {
+  try {
+    if (!/^\d{15,22}$/.test(String(videoId))) return 0;
+    const sec = Number(BigInt(videoId) >> 32n);
+    if (!Number.isFinite(sec) || sec <= 1500000000) return 0;
+    return sec * 1000;
+  } catch {
+    return 0;
+  }
+}
 
-  if (roomId && status === 2) {
+function buildLiveResultFromRoom({ account, liveUrl, user, liveRoom }) {
+  const roomId = String(user?.roomId || liveRoom?.roomId || "").trim();
+  const isLiveStatus =
+    Number(liveRoom?.status) === 2 || Number(user?.status) === 2;
+
+  if (roomId && isLiveStatus) {
     const startTimeSec = Number(liveRoom?.startTime);
-    const uniqueStreamId = String(
-      liveRoom?.streamId || (startTimeSec > 0 ? `${roomId}_${startTimeSec}` : roomId)
-    );
+    const roomTimestampMs = decodeTikTokVideoTimestampMs(roomId);
+    const uniqueStreamId = String(roomId || liveRoom?.streamId);
+    const rawTitle = String(liveRoom?.title || "").trim();
 
     return {
       isLive: true,
       available: true,
       streamId: uniqueStreamId,
-      title: String(
-        liveRoom?.title || `${account.username} SEDANG LIVE DI TIKTOK!`
+      title: (
+        rawTitle || `${account.username} SEDANG LIVE DI TIKTOK!`
       ).toUpperCase(),
+      hasCustomTitle: Boolean(rawTitle),
       streamUrl: liveUrl,
       thumbnailUrl:
         liveRoom?.coverUrl ||
@@ -301,7 +316,9 @@ function buildLiveResultFromRoom({ account, liveUrl, user, liveRoom }) {
       startedAt:
         Number.isFinite(startTimeSec) && startTimeSec > 0
           ? new Date(startTimeSec * 1000).toISOString()
-          : new Date().toISOString(),
+          : roomTimestampMs > 0
+            ? new Date(roomTimestampMs).toISOString()
+            : new Date().toISOString(),
     };
   }
 
@@ -324,8 +341,23 @@ export async function checkTikTokAccountLive(account) {
   const liveUrl = `https://www.tiktok.com/@${cleanUsername}/live`;
 
   try {
-    const apiResult = await fetchTikTokLiveRoomApi(cleanUsername);
+    let apiResult = await fetchTikTokLiveRoomApi(cleanUsername);
     if (apiResult.ok && (apiResult.user || apiResult.liveRoom)) {
+      const isLiveNow =
+        Number(apiResult.liveRoom?.status) === 2 ||
+        Number(apiResult.user?.status) === 2;
+      const hasRoomTitle = Boolean(String(apiResult.liveRoom?.title || "").trim());
+
+      if (isLiveNow && !hasRoomTitle) {
+        await sleep(600);
+        const retryResult = await fetchTikTokLiveRoomApi(cleanUsername).catch(
+          () => null
+        );
+        if (retryResult?.ok && (retryResult.user || retryResult.liveRoom)) {
+          apiResult = retryResult;
+        }
+      }
+
       return buildLiveResultFromRoom({
         account,
         liveUrl,
@@ -333,7 +365,12 @@ export async function checkTikTokAccountLive(account) {
         liveRoom: apiResult.liveRoom,
       });
     }
-  } catch {}
+  } catch (error) {
+    logger.warn("TIKTOK", `Gagal memeriksa live room API untuk ${account.username}`, {
+      username: account.username,
+      error: error.message,
+    });
+  }
 
   try {
     const response = await fetch(liveUrl, {
@@ -457,17 +494,6 @@ export async function checkTikTokAccountsLive(accounts = [], { force = false } =
   );
 
   return results;
-}
-
-function decodeTikTokVideoTimestampMs(videoId) {
-  try {
-    if (!/^\d{15,22}$/.test(String(videoId))) return 0;
-    const sec = Number(BigInt(videoId) >> 32n);
-    if (!Number.isFinite(sec) || sec <= 1500000000) return 0;
-    return sec * 1000;
-  } catch {
-    return 0;
-  }
 }
 
 async function fetchTikTokCreatorItemsBySecUid(secUid, cleanUsername) {
@@ -623,7 +649,11 @@ export async function checkTikTokAccountContent(
     return newPosts.sort(
       (a, b) => Date.parse(a.publishedAt) - Date.parse(b.publishedAt)
     );
-  } catch {
+  } catch (error) {
+    logger.warn("TIKTOK", `Gagal memeriksa konten TikTok ${account.username}`, {
+      username: account.username,
+      error: error.message,
+    });
     return [];
   }
 }
