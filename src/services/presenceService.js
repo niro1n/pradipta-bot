@@ -5,6 +5,7 @@ import {
 } from "discord.js";
 import config from "../config/config.js";
 import supabase from "./database.js";
+import logger from "./logger.js";
 
 let rotationTimer = null;
 let currentSlideIndex = 0;
@@ -61,8 +62,9 @@ export async function hasGuildMembersIntent(token) {
 
     if (!response.ok) {
       if (response.status !== 401) {
-        console.warn(
-          `[PRESENCE WARN] Gagal memeriksa application flags Discord (status ${response.status}).`
+        logger.warn(
+          "PRESENCE",
+          `Gagal memeriksa application flags Discord (status ${response.status}).`
         );
       }
       return false;
@@ -76,8 +78,9 @@ export async function hasGuildMembersIntent(token) {
       flags.has("GatewayGuildMembersLimited")
     );
   } catch (error) {
-    console.warn(
-      `[PRESENCE WARN] Gagal memeriksa Server Members Intent: ${error.message}`
+    logger.warn(
+      "PRESENCE",
+      `Gagal memeriksa Server Members Intent: ${error.message}`
     );
     return false;
   }
@@ -93,8 +96,9 @@ export async function resolveTargetGuild(client) {
     try {
       return await client.guilds.fetch(guildId);
     } catch (error) {
-      console.warn(
-        `[PRESENCE WARN] Gagal mengambil guild ${guildId}: ${error.message}`
+      logger.warn(
+        "PRESENCE",
+        `Gagal mengambil guild ${guildId}: ${error.message}`
       );
       return null;
     }
@@ -201,8 +205,9 @@ export async function updateMemberPresence(client, { forceFetch = false } = {}) 
     stopPresenceRotation();
 
     if (forceFetch) {
-      console.warn(
-        '[PRESENCE WARN] Server Members Intent belum aktif di Discord Developer Portal. Akun ber-badge "APP" belum bisa difilter — menggunakan status default.'
+      logger.warn(
+        "PRESENCE",
+        'Server Members Intent belum aktif di Discord Developer Portal. Akun ber-badge "APP" belum bisa difilter — menggunakan status default.'
       );
     }
 
@@ -223,8 +228,9 @@ export async function updateMemberPresence(client, { forceFetch = false } = {}) 
     cachedHumanCount = null;
     stopPresenceRotation();
 
-    console.warn(
-      "[PRESENCE WARN] Target server tidak ditemukan, menggunakan status default."
+    logger.warn(
+      "PRESENCE",
+      "Target server tidak ditemukan, menggunakan status default."
     );
     const fallbackSlides = buildPresenceSlides(null, cachedStreamerStats);
     applySlide(client, fallbackSlides[0]);
@@ -254,8 +260,9 @@ export async function updateMemberPresence(client, { forceFetch = false } = {}) 
   applySlide(client, slides[0]);
   startPresenceRotation(client);
 
-  console.log(
-    `[PRESENCE] Watching ${slides.map((s) => s.name).join(" ↔ ")} (Total: ${totalCount} | Non-APP: ${humanCount} | APP dilewati: ${appCount})`
+  logger.info(
+    "PRESENCE",
+    `Watching ${slides.map((s) => s.name).join(" ↔ ")} (Total: ${totalCount} | Non-APP: ${humanCount} | APP dilewati: ${appCount})`
   );
 
   return {
