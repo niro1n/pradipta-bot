@@ -11,6 +11,7 @@ import {
 } from "discord.js";
 import config from "../config/config.js";
 import supabase from "./database.js";
+import logger from "./logger.js";
 import { resolveYouTubeChannel } from "./youtube.js";
 import { resolveTikTokAccount } from "./tiktok.js";
 import { fetchStreamerStats } from "./presenceService.js";
@@ -391,8 +392,9 @@ export async function handleViewStreamers(
 async function performRegistrationPanelSync(client) {
   const channelId = config.channels.registerChannelId;
   if (!channelId) {
-    console.warn(
-      "[REGISTRATION] REGISTER_CHANNEL_ID belum dikonfigurasi, melewati inisialisasi panel."
+    logger.warn(
+      "REGISTRATION",
+      "REGISTER_CHANNEL_ID belum dikonfigurasi, melewati inisialisasi panel."
     );
     return null;
   }
@@ -402,8 +404,10 @@ async function performRegistrationPanelSync(client) {
     (await client.channels.fetch(channelId).catch(() => null));
 
   if (!channel || !channel.isTextBased()) {
-    console.error(
-      `[REGISTRATION] Channel registrasi (${channelId}) tidak ditemukan atau bukan text channel.`
+    logger.error(
+      "REGISTRATION",
+      `Channel registrasi (${channelId}) tidak ditemukan atau bukan text channel.`,
+      { channelId }
     );
     return null;
   }
@@ -416,8 +420,10 @@ async function performRegistrationPanelSync(client) {
   try {
     messages = await channel.messages.fetch({ limit: 25 });
   } catch (err) {
-    console.warn(
-      `[REGISTRATION] Gagal membaca daftar pesan di #${channel.name}: ${err.message}`
+    logger.warn(
+      "REGISTRATION",
+      `Gagal membaca daftar pesan di #${channel.name}: ${err.message}`,
+      { channelId }
     );
     return null;
   }
@@ -437,15 +443,19 @@ async function performRegistrationPanelSync(client) {
     }
 
     const updatedPanel = await primaryPanel.edit(payload);
-    console.log(
-      `[REGISTRATION] Panel registrasi diperbarui di #${channel.name} (id: ${updatedPanel.id}).`
+    logger.info(
+      "REGISTRATION",
+      `Panel registrasi diperbarui di #${channel.name} (id: ${updatedPanel.id}).`
     );
     return updatedPanel;
   }
 
   const created = await channel.send(payload);
-  console.log(
-    `[REGISTRATION] Panel registrasi baru dibuat di #${channel.name} (id: ${created.id}).`
+  logger.info(
+    "REGISTRATION",
+    `Panel registrasi baru dibuat di #${channel.name} (id: ${created.id}).`,
+    { messageId: created.id },
+    { persistDb: true }
   );
   return created;
 }
@@ -772,6 +782,17 @@ export async function handleConfirmRegistration(interaction, confirmed) {
 
   if (insertedAccount) {
     cacheOwnedAccount(interaction.user.id, insertedAccount);
+    logger.info(
+      "REGISTRATION",
+      `Akun baru terdaftar: ${pending.platform}:${pending.username} oleh ${interaction.user.username}`,
+      {
+        accountId: insertedAccount.id,
+        platform: pending.platform,
+        username: pending.username,
+        discordUserId: interaction.user.id,
+      },
+      { persistDb: true }
+    );
   }
 
   if (interaction.client) {
@@ -1129,6 +1150,18 @@ export async function handleEditAccountModalSubmit(interaction, accountId) {
   }
 
   cacheOwnedAccount(interaction.user.id, updated);
+  logger.info(
+    "REGISTRATION",
+    `Akun diperbarui: ${updated.platform}:${account.username} -> ${updated.username} oleh ${interaction.user.username}`,
+    {
+      accountId: updated.id,
+      platform: updated.platform,
+      oldUsername: account.username,
+      newUsername: updated.username,
+      discordUserId: interaction.user.id,
+    },
+    { persistDb: true }
+  );
 
   if (interaction.client) {
     ensureRegistrationPanel(interaction.client).catch(() => {});
@@ -1246,6 +1279,17 @@ export async function handleDeleteAccountConfirm(interaction, accountId) {
   }
 
   removeCachedOwnedAccount(interaction.user.id, accountId);
+  logger.info(
+    "REGISTRATION",
+    `Akun dihapus: ${account.platform}:${account.username} oleh ${interaction.user.username}`,
+    {
+      accountId: account.id,
+      platform: account.platform,
+      username: account.username,
+      discordUserId: interaction.user.id,
+    },
+    { persistDb: true }
+  );
 
   if (interaction.client) {
     ensureRegistrationPanel(interaction.client).catch(() => {});
