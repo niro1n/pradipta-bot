@@ -1,5 +1,6 @@
 import { Events, MessageFlags } from "discord.js";
 import config from "../config/config.js";
+import logger from "../services/logger.js";
 import {
   handleCloseEphemeral,
   handleConfirmRegistration,
@@ -149,8 +150,13 @@ export default {
         !interaction.replied &&
         !interaction.deferred
       ) {
-        console.warn(
-          `[INTERACTION] Unhandled customId: ${interaction.customId}`
+        logger.warn(
+          "INTERACTION",
+          `Unhandled customId: ${interaction.customId}`,
+          {
+            customId: interaction.customId,
+            userId: interaction.user?.id,
+          }
         );
       }
     } catch (error) {
@@ -164,8 +170,16 @@ export default {
 
       const elapsed = Date.now() - startTime;
       const safeMessage = sanitizeUserErrorMessage(error?.message);
-      console.error(
-        `[INTERACTION ERROR] customId=${interaction.customId || "unknown"} user=${interaction.user?.id} (${elapsed}ms): ${safeMessage}`
+      logger.error(
+        "INTERACTION",
+        `customId=${interaction.customId || "unknown"} user=${interaction.user?.id} (${elapsed}ms): ${safeMessage}`,
+        {
+          customId: interaction.customId || "unknown",
+          userId: interaction.user?.id,
+          username: interaction.user?.username,
+          elapsedMs: elapsed,
+          errorCode: error?.code,
+        }
       );
 
       try {
@@ -189,8 +203,13 @@ export default {
           scheduleEphemeralAutoDelete(interaction.user.id, interaction, 6000);
         }
       } catch (replyErr) {
-        console.error(
-          `[INTERACTION REPLY ERROR] Gagal mengirim pesan error: ${sanitizeUserErrorMessage(replyErr?.message)}`
+        logger.error(
+          "INTERACTION",
+          `Gagal mengirim pesan error interaksi: ${sanitizeUserErrorMessage(replyErr?.message)}`,
+          {
+            customId: interaction.customId || "unknown",
+            userId: interaction.user?.id,
+          }
         );
       }
     }
