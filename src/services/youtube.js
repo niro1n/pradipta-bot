@@ -156,10 +156,6 @@ async function callYouTubeApi(endpoint, params, quotaCost = 1, maxRetries = 2) {
 
       if (response.ok) {
         const data = await response.json();
-        logger.info(
-          "YOUTUBE",
-          `${endpoint} | cost=${quotaCost} | totalUnits=${totalQuotaUnitsUsed}`
-        );
         return data;
       }
 
@@ -294,7 +290,13 @@ async function discoverLiveVideoIdFromCanonical(channelId) {
       /<link\s+rel="canonical"\s+href="https:\/\/www\.youtube\.com\/watch\?v=([\w-]{11})"/i
     );
     if (canonicalMatch?.[1]) {
-      return canonicalMatch[1];
+      const isActivelyLive =
+        /"isLiveNow"\s*:\s*true/i.test(html) ||
+        (/"isLive"\s*:\s*true/i.test(html) && !/"isUpcoming"\s*:\s*true/i.test(html));
+      return {
+        videoId: canonicalMatch[1],
+        isActivelyLive,
+      };
     }
     return null;
   } catch {
@@ -360,14 +362,18 @@ async function discoverVideoIdsFromPublicFeed(channelId) {
 async function fetchRecentCandidateVideoIds(channelId) {
   const candidates = new Set();
 
-  const [canonicalVideoId, feedVideoIds] = await Promise.all([
+  const [canonicalResult, feedVideoIds] = await Promise.all([
     discoverLiveVideoIdFromCanonical(channelId),
     discoverVideoIdsFromPublicFeed(channelId),
   ]);
 
-  if (canonicalVideoId) {
-    finishedVideoIds.delete(canonicalVideoId);
-    candidates.add(canonicalVideoId);
+  if (canonicalResult?.videoId) {
+    if (canonicalResult.isActivelyLive) {
+      finishedVideoIds.delete(canonicalResult.videoId);
+    }
+    if (!finishedVideoIds.has(canonicalResult.videoId)) {
+      candidates.add(canonicalResult.videoId);
+    }
   }
 
   for (const vid of feedVideoIds) {
@@ -485,7 +491,10 @@ export async function checkYouTubeAccountsLive(accounts = [], { force = false } 
         1
       );
 
+      const returnedVideoIds = new Set();
+
       for (const video of videosData?.items || []) {
+        returnedVideoIds.add(video.id);
         const broadcastContent = video.snippet?.liveBroadcastContent || "none";
         const isLiveBroadcast = broadcastContent === "live";
         const hasActiveStreamTime =
@@ -510,14 +519,29 @@ export async function checkYouTubeAccountsLive(accounts = [], { force = false } 
               video.liveStreamingDetails?.actualStartTime || new Date().toISOString(),
             channelTitle: video.snippet.channelTitle || null,
           });
-        } else if (
-          broadcastContent === "none" &&
-          (!video.liveStreamingDetails || video.liveStreamingDetails.actualEndTime)
-        ) {
+        } else {
+          const scheduledMs = video.liveStreamingDetails?.scheduledStartTime
+            ? Date.parse(video.liveStreamingDetails.scheduledStartTime)
+            : 0;
+          const isFreshUpcoming =
+            broadcastContent === "upcoming" &&
+            scheduledMs > Date.now() - 3 * 60 * 60 * 1000;
+
+          if (!isFreshUpcoming) {
+            if (finishedVideoIds.size > 500) {
+              finishedVideoIds.clear();
+            }
+            finishedVideoIds.add(video.id);
+          }
+        }
+      }
+
+      for (const requestedId of batchIds) {
+        if (!returnedVideoIds.has(requestedId)) {
           if (finishedVideoIds.size > 500) {
             finishedVideoIds.clear();
           }
-          finishedVideoIds.add(video.id);
+          finishedVideoIds.add(requestedId);
         }
       }
     } catch (error) {
