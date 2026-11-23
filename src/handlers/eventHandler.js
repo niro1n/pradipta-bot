@@ -1,6 +1,7 @@
 import { readdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import logger from "../services/logger.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -16,7 +17,7 @@ export async function loadEvents(client) {
     const event = eventModule.default ?? eventModule;
 
     if (!event?.name || typeof event.execute !== "function") {
-      console.warn(`[EVENT] Melewati ${file}: format event tidak valid.`);
+      logger.warn("EVENT", `Melewati ${file}: format event tidak valid.`);
       continue;
     }
 
@@ -26,9 +27,10 @@ export async function loadEvents(client) {
       try {
         await event.execute(...args);
       } catch (error) {
-        console.error(
-          `[EVENT ERROR] Terjadi kesalahan pada event "${event.name}":`,
-          error
+        logger.error(
+          "EVENT",
+          `Terjadi kesalahan pada event "${event.name}": ${error?.message || error}`,
+          { event: event.name, error }
         );
       }
     };
@@ -39,6 +41,6 @@ export async function loadEvents(client) {
       client.on(event.name, listener);
     }
 
-    console.log(`[EVENT] Terdaftar: ${event.name} (${file})`);
+    logger.info("EVENT", `Terdaftar: ${event.name} (${file})`);
   }
 }
