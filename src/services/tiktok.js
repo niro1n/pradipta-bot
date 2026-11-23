@@ -366,10 +366,20 @@ export async function checkTikTokAccountLive(account) {
       });
     }
   } catch (error) {
-    logger.warn("TIKTOK", `Gagal memeriksa live room API untuk ${account.username}`, {
-      username: account.username,
-      error: error.message,
-    });
+    const isTimeout =
+      error?.name === "TimeoutError" ||
+      error?.name === "AbortError" ||
+      String(error?.message || "").includes("aborted due to timeout");
+    if (!isTimeout) {
+      logger.warn(
+        "TIKTOK",
+        `Gagal memeriksa live room API untuk ${account.username}`,
+        {
+          username: account.username,
+          error: error.message,
+        }
+      );
+    }
   }
 
   try {
