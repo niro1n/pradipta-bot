@@ -1,4 +1,5 @@
 import config from "../config/config.js";
+import logger from "./logger.js";
 
 const YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3";
 const REQUEST_TIMEOUT_MS = 8000;
@@ -155,8 +156,9 @@ async function callYouTubeApi(endpoint, params, quotaCost = 1, maxRetries = 2) {
 
       if (response.ok) {
         const data = await response.json();
-        console.log(
-          `[YouTube API] ${endpoint} | cost=${quotaCost} | totalUnits=${totalQuotaUnitsUsed}`
+        logger.info(
+          "YOUTUBE",
+          `${endpoint} | cost=${quotaCost} | totalUnits=${totalQuotaUnitsUsed}`
         );
         return data;
       }
@@ -175,8 +177,10 @@ async function callYouTubeApi(endpoint, params, quotaCost = 1, maxRetries = 2) {
         (reason === "quotaExceeded" || reason === "dailyLimitExceeded")
       ) {
         quotaCooldownUntil = Date.now() + QUOTA_COOLDOWN_MS;
-        console.error(
-          `[YouTube API] Kuota YouTube Data API habis (${reason}). Mengaktifkan cooldown 30 menit.`
+        logger.error(
+          "YOUTUBE",
+          `Kuota YouTube Data API habis (${reason}). Mengaktifkan cooldown 30 menit.`,
+          { endpoint, reason, totalQuotaUnitsUsed }
         );
         throw new Error("Kuota YouTube Data API v3 telah mencapai batas harian (quotaExceeded).");
       }
@@ -184,8 +188,10 @@ async function callYouTubeApi(endpoint, params, quotaCost = 1, maxRetries = 2) {
       const isTransient = [429, 500, 502, 503, 504].includes(response.status);
       if (isTransient && attempt <= maxRetries) {
         const delayMs = attempt * 1000;
-        console.warn(
-          `[YouTube API] Status ${response.status} pada ${endpoint}, mencoba ulang dalam ${delayMs}ms...`
+        logger.warn(
+          "YOUTUBE",
+          `Status ${response.status} pada ${endpoint}, mencoba ulang dalam ${delayMs}ms...`,
+          { endpoint, status: response.status, attempt }
         );
         await sleep(delayMs);
         continue;
@@ -406,12 +412,18 @@ export async function checkYouTubeAccountsLive(accounts = [], { force = false } 
   const results = new Map();
 
   if (!config.youtube.apiKey) {
-    console.warn("[YouTube Monitor] YOUTUBE_API_KEY kosong, melewati pemeriksaan YouTube.");
+    logger.warn(
+      "YOUTUBE",
+      "YOUTUBE_API_KEY kosong, melewati pemeriksaan YouTube."
+    );
     return results;
   }
 
   if (Date.now() < quotaCooldownUntil) {
-    console.warn("[YouTube Monitor] Melewati pemeriksaan karena kuota sedang dalam masa cooldown.");
+    logger.warn(
+      "YOUTUBE",
+      "Melewati pemeriksaan karena kuota sedang dalam masa cooldown."
+    );
     return results;
   }
 
@@ -444,8 +456,10 @@ export async function checkYouTubeAccountsLive(accounts = [], { force = false } 
           allCandidateVideoIds.add(vid);
         }
       } catch (error) {
-        console.error(
-          `[YouTube Monitor] Gagal memeriksa kandidat video untuk ${account.username}: ${error.message}`
+        logger.error(
+          "YOUTUBE",
+          `Gagal memeriksa kandidat video untuk ${account.username}: ${error.message}`,
+          { accountId: account.id, username: account.username }
         );
         results.set(account.id, {
           isLive: false,
@@ -507,7 +521,11 @@ export async function checkYouTubeAccountsLive(accounts = [], { force = false } 
         }
       }
     } catch (error) {
-      console.error(`[YouTube Monitor] Gagal memverifikasi batch video: ${error.message}`);
+      logger.error(
+        "YOUTUBE",
+        `Gagal memverifikasi batch video: ${error.message}`,
+        { batchSize: batchIds.length }
+      );
     }
   }
 
@@ -650,8 +668,10 @@ export async function checkYouTubeAccountsContent(
         results.set(account.id, list);
       }
     } catch (error) {
-      console.error(
-        `[YouTube Content] Gagal memverifikasi batch konten: ${error.message}`
+      logger.error(
+        "YOUTUBE",
+        `Gagal memverifikasi batch konten: ${error.message}`,
+        { batchSize: batchIds.length }
       );
     }
   }
